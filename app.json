@@ -7,9 +7,6 @@
     "icon": "./assets/icon.png",
     "scheme": "solace",
     "userInterfaceStyle": "automatic",
-    "splash": {
-      "backgroundColor": "#0B0F17"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.solace.wellness"
@@ -28,7 +25,20 @@
     "plugins": [
       "expo-router",
       "expo-image",
-      "expo-notifications"
-    ]
+      "expo-notifications",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0B0F17",
+          "image": "./assets/icon.png",
+          "imageWidth": 180
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "YOUR_EXISTING_PROJECT_ID"
+      }
+    }
   }
 }

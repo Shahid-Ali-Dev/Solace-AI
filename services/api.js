@@ -38,7 +38,7 @@ const parseJsonSafe = async (res) => {
   }
 };
 
-const fetchWithTimeout = async (url, options = {}, timeoutMs = 15000) => {
+const fetchWithTimeout = async (url, options = {}, timeoutMs = 40000) => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
