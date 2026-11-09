@@ -1,0 +1,54 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String        @id @default(uuid())
+  email           String?       @unique
+  passwordHash    String?
+  name            String        @default("Friend")
+  avatar          String        @default("https://api.dicebear.com/9.x/lorelei/png?seed=Lumi")
+  companionAvatar String        @default("lumi_girl")
+  wellnessGoal    String        @default("Calm & Stress Relief")
+  isGuest         Boolean       @default(false)
+  createdAt       DateTime      @default(now())
+
+  moodLogs        MoodLog[]
+  chatSessions    ChatSession[]
+}
+
+model MoodLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mood      String   // "peaceful" | "anxious" | "tired" | "overwhelmed" | "grateful"
+  note      String?
+  intensity Int      @default(3) // 1 to 5
+  createdAt DateTime @default(now())
+}
+
+model ChatSession {
+  id        String        @id @default(uuid())
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String        @default("Daily Check-in")
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  messages  ChatMessage[]
+}
+
+model ChatMessage {
+  id          String      @id @default(uuid())
+  sessionId   String
+  session     ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sender      String      // "user" | "assistant"
+  content     String
+  suggestions String?     // JSON array of 3 dynamic follow-up prompts
+  createdAt   DateTime    @default(now())
+}

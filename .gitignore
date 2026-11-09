@@ -1,0 +1,23 @@
+node_modules/
+.expo/
+dist/
+web-build/
+android/
+ios/
+
+# Keep all environment secrets & local DB files out of Git
+.env
+.env.*
+!.env.example
+*.db
+*.db-journal
+
+# EAS / signing keys
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+.DS_Store
+*.log
