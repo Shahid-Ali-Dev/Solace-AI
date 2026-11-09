@@ -55,7 +55,8 @@
             "image": "./assets/icon.png"
           }
         }
-      ]
+      ],
+      "expo-audio"
     ],
     "extra": {
       "eas": {

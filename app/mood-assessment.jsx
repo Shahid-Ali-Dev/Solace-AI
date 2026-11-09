@@ -289,12 +289,12 @@ export default function MoodAssessmentScreen() {
         <TouchableOpacity
           onPress={() => {
             triggerHaptic();
-            if (result) {
-              router.back();
-            } else if (step > 0) {
+            if (!result && step > 0) {
               setStep((s) => s - 1);
-            } else {
+            } else if (router.canGoBack()) {
               router.back();
+            } else {
+              router.replace("/(tabs)");
             }
           }}
           style={[

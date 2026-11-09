@@ -22,6 +22,14 @@ import { useAuth } from "../../context/AuthContext";
 import { api } from "../../services/api";
 import { getCompanionById } from "../../constants/companions";
 import { getLocalDateKey, markDailyHabit } from "../../utils/dailyHabits";
+import YogaMascot from "../../components/YogaMascot";
+import {
+  SOUND_OPTIONS,
+  startAmbientSound,
+  setAmbientVolume,
+  stopAmbientSound,
+  playBreathCueChime,
+} from "../../utils/ambientSound";
 
 const BREATHING_PRESETS = [
   {
@@ -108,6 +116,7 @@ export default function BreatheScreen() {
   const [isFocused, setIsFocused] = useState(true);
   const [selectedPresetId, setSelectedPresetId] = useState("sigh");
   const [selectedDurationSec, setSelectedDurationSec] = useState(120);
+  const [selectedSound, setSelectedSound] = useState("zen_pad");
   const [hapticGuidance, setHapticGuidance] = useState(true);
 
   const [phaseIndex, setPhaseIndex] = useState(0);
@@ -124,6 +133,7 @@ export default function BreatheScreen() {
   const phaseEndsAtRef = useRef(Date.now());
   const habitMarkedRef = useRef(false);
   const lastSavedSecRef = useRef(0);
+  const previewTimerRef = useRef(null);
 
   const activePreset =
     BREATHING_PRESETS.find((p) => p.id === selectedPresetId) ||
@@ -164,18 +174,28 @@ export default function BreatheScreen() {
     return () => rotLoop.stop();
   }, [isFocused]);
 
-  // Pause cleanly when leaving tab
+  // Pause & silence audio cleanly when leaving tab
   useFocusEffect(
     useCallback(() => {
       setIsFocused(true);
       return () => {
         setIsFocused(false);
         setIsActive(false);
+        if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
+        stopAmbientSound().catch(() => {});
       };
     }, [])
   );
 
-  // Apply preset sent from Home AI suggestions or Assessment
+  // Stop sound on unmount
+  useEffect(() => {
+    return () => {
+      if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
+      stopAmbientSound().catch(() => {});
+    };
+  }, []);
+
+  // Apply preset sent from Home AI suggestions, Assessment, or Notifications
   useEffect(() => {
     if (
       typeof preset === "string" &&
@@ -194,6 +214,16 @@ export default function BreatheScreen() {
     }
   }, [preset]);
 
+  // Sync ambient music playback with active state & selected soundscape
+  useEffect(() => {
+    if (isActive && isFocused && !sessionComplete && selectedSound !== "off") {
+      if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
+      startAmbientSound(selectedSound, 0.44).catch(() => {});
+    } else if (!previewTimerRef.current) {
+      stopAmbientSound().catch(() => {});
+    }
+  }, [isActive, isFocused, sessionComplete, selectedSound]);
+
   const triggerPhaseHaptic = (phaseName) => {
     if (!hapticGuidance) return;
     try {
@@ -205,7 +235,7 @@ export default function BreatheScreen() {
     } catch {}
   };
 
-  // Phase animation + progression loop
+  // Phase animation, audio volume swell, chimes & progression loop
   useEffect(() => {
     let timer;
     scaleAnim.stopAnimation();
@@ -217,6 +247,17 @@ export default function BreatheScreen() {
       setPhaseSecondsLeft(phaseDurationSec);
 
       triggerPhaseHaptic(current.name);
+
+      if (selectedSound !== "off") {
+        const targetVol =
+          current.name === "Inhale" || current.name === "Top Off"
+            ? 0.56
+            : current.name === "Hold"
+            ? 0.42
+            : 0.28;
+        setAmbientVolume(targetVol);
+        playBreathCueChime(current.name).catch(() => {});
+      }
 
       Animated.timing(scaleAnim, {
         toValue: current.scale,
@@ -253,9 +294,9 @@ export default function BreatheScreen() {
       if (timer) clearTimeout(timer);
       scaleAnim.stopAnimation();
     };
-  }, [isActive, phaseIndex, isFocused, activePreset, sessionComplete]);
+  }, [isActive, phaseIndex, isFocused, activePreset, sessionComplete, selectedSound]);
 
-  // Countdown + session clock + mindful minutes accumulator
+  // Countdown + session clock
   useEffect(() => {
     if (!isActive || !isFocused || sessionComplete) return;
 
@@ -274,7 +315,7 @@ export default function BreatheScreen() {
     };
   }, [isActive, isFocused, sessionComplete]);
 
-  // Persist delta mindful seconds safely
+  // Persist delta mindful seconds
   useEffect(() => {
     const delta = sessionElapsedSec - lastSavedSecRef.current;
     if (delta >= 5 || (!isActive && delta > 0)) {
@@ -303,6 +344,8 @@ export default function BreatheScreen() {
   const finishSessionNow = () => {
     setIsActive(false);
     setSessionComplete(true);
+    if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
+    stopAmbientSound().catch(() => {});
     if (!habitMarkedRef.current) {
       habitMarkedRef.current = true;
       markDailyHabit(user?.id, "breathe").catch(() => {});
@@ -341,10 +384,41 @@ export default function BreatheScreen() {
     setSelectedDurationSec(sec);
   };
 
+  const handleSelectSound = (soundId) => {
+    try {
+      Haptics.selectionAsync();
+    } catch {}
+    setSelectedSound(soundId);
+
+    if (previewTimerRef.current) {
+      clearTimeout(previewTimerRef.current);
+      previewTimerRef.current = null;
+    }
+
+    if (soundId === "off") {
+      stopAmbientSound().catch(() => {});
+      return;
+    }
+
+    // Play a short 2.5s preview if paused so the user can hear the track immediately
+    if (!isActive) {
+      startAmbientSound(soundId, 0.42).catch(() => {});
+      previewTimerRef.current = setTimeout(() => {
+        previewTimerRef.current = null;
+        stopAmbientSound().catch(() => {});
+      }, 2600);
+    }
+  };
+
   const handleTogglePlay = () => {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch {}
+
+    if (previewTimerRef.current) {
+      clearTimeout(previewTimerRef.current);
+      previewTimerRef.current = null;
+    }
 
     if (sessionComplete) {
       resetSessionState();
@@ -385,16 +459,16 @@ export default function BreatheScreen() {
 
   const onPrimaryText = isDark ? "#0B0F17" : "#FFFFFF";
   const bottomInset = Math.max(insets.bottom, Platform.OS === "ios" ? 20 : 12);
-  const bottomClearance = 66 + bottomInset + 16;
+  const bottomClearance = 66 + bottomInset + 14;
 
-  const isCompactScreen = height < 730;
-  const orbBaseSize = isCompactScreen ? 114 : 132;
-  const petalSize = orbBaseSize + 36;
-  const outerRingSize = orbBaseSize + 68;
+  const isCompactScreen = height < 740;
+  const mascotSize = isCompactScreen ? 116 : 136;
+  const petalSize = mascotSize + 24;
+  const outerRingSize = mascotSize + 52;
 
   const outerAuraScale = scaleAnim.interpolate({
     inputRange: [0.94, 1.42],
-    outputRange: [0.92, 1.46],
+    outputRange: [0.92, 1.38],
     extrapolate: "clamp",
   });
 
@@ -429,7 +503,7 @@ export default function BreatheScreen() {
           <Text style={[styles.screenSub, { color: colors.textMuted }]}>
             {mindfulMinutesToday > 0
               ? `${mindfulMinutesToday} min mindful today`
-              : "Guided nervous system reset"}
+              : `Guided with ${activeCompanion.name}`}
           </Text>
         </View>
 
@@ -469,7 +543,7 @@ export default function BreatheScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Technique Selector */}
+      {/* Technique + Duration + Soundscape Controls */}
       <View>
         <ScrollView
           horizontal
@@ -522,7 +596,7 @@ export default function BreatheScreen() {
           })}
         </ScrollView>
 
-        {/* Duration Selector */}
+        {/* Duration Pills */}
         <View style={styles.durationRow}>
           {DURATION_OPTIONS.map((opt) => {
             const selected = opt.seconds === selectedDurationSec;
@@ -554,9 +628,50 @@ export default function BreatheScreen() {
             );
           })}
         </View>
+
+        {/* Soothing Soundscape Selector */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.soundRow}
+        >
+          {SOUND_OPTIONS.map((s) => {
+            const selected = selectedSound === s.id;
+            return (
+              <TouchableOpacity
+                key={s.id}
+                onPress={() => handleSelectSound(s.id)}
+                activeOpacity={0.8}
+                style={[
+                  styles.soundChip,
+                  {
+                    backgroundColor: selected
+                      ? colors.accent + "22"
+                      : colors.surface,
+                    borderColor: selected ? colors.accent : colors.border,
+                  },
+                ]}
+              >
+                <Ionicons
+                  name={s.icon}
+                  size={13}
+                  color={selected ? colors.accent : colors.textMuted}
+                />
+                <Text
+                  style={[
+                    styles.soundChipText,
+                    { color: selected ? colors.text : colors.textMuted },
+                  ]}
+                >
+                  {s.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
       </View>
 
-      {/* Breathing Stage OR Calm Post-Session Summary */}
+      {/* Breathing Stage with Yoga Mascot OR Calm Post-Session Summary */}
       {sessionComplete ? (
         <View style={styles.completeStage}>
           <View
@@ -565,13 +680,12 @@ export default function BreatheScreen() {
               { backgroundColor: colors.surface, borderColor: colors.border },
             ]}
           >
-            <View
-              style={[
-                styles.completeIconCircle,
-                { backgroundColor: "rgba(16, 185, 129, 0.16)" },
-              ]}
-            >
-              <Ionicons name="checkmark-circle" size={38} color="#10B981" />
+            <View style={{ marginBottom: 8 }}>
+              <YogaMascot
+                avatarId={user?.companionAvatar}
+                size={96}
+                sessionComplete
+              />
             </View>
 
             <Text style={[styles.completeTitle, { color: colors.text }]}>
@@ -655,99 +769,87 @@ export default function BreatheScreen() {
         </View>
       ) : (
         <View style={styles.centerStage}>
-          {/* Ambient Counter-Rotating Aura Petals */}
-          <Animated.View
-            pointerEvents="none"
-            renderToHardwareTextureAndroid
-            style={[
-              styles.glowRing,
-              {
-                width: outerRingSize,
-                height: outerRingSize,
-                borderRadius: outerRingSize / 2,
-                backgroundColor: colors.accent + "14",
-                borderColor: colors.accent + "28",
-                transform: [{ scale: outerAuraScale }, { rotate: spinCw }],
-              },
-            ]}
-          />
-
-          <Animated.View
-            pointerEvents="none"
-            renderToHardwareTextureAndroid
-            style={[
-              styles.petalRing,
-              {
-                width: petalSize,
-                height: petalSize,
-                borderRadius: petalSize * 0.36,
-                backgroundColor: colors.primary + "1F",
-                borderColor: colors.primary + "38",
-                transform: [{ scale: scaleAnim }, { rotate: spinCcw }],
-              },
-            ]}
-          />
-
-          {/* Interactive Tap-to-Start/Pause Gradient Orb */}
-          <TouchableOpacity
-            onPress={handleTogglePlay}
-            activeOpacity={0.9}
-            accessibilityLabel={
-              isActive ? "Pause breathing" : "Tap orb to start breathing"
-            }
-            style={styles.orbTouchWrap}
-          >
+          {/* Animated Aura + Lotus Mascot Stage */}
+          <View style={styles.mascotStage}>
             <Animated.View
+              pointerEvents="none"
               renderToHardwareTextureAndroid
               style={[
-                styles.orbShell,
+                styles.glowRing,
                 {
-                  width: orbBaseSize,
-                  height: orbBaseSize,
-                  borderRadius: orbBaseSize / 2,
-                  transform: [{ scale: scaleAnim }],
+                  width: outerRingSize,
+                  height: outerRingSize,
+                  borderRadius: outerRingSize / 2,
+                  backgroundColor: colors.accent + "12",
+                  borderColor: colors.accent + "2E",
+                  transform: [{ scale: outerAuraScale }, { rotate: spinCw }],
                 },
               ]}
+            />
+
+            <Animated.View
+              pointerEvents="none"
+              renderToHardwareTextureAndroid
+              style={[
+                styles.petalRing,
+                {
+                  width: petalSize,
+                  height: petalSize,
+                  borderRadius: petalSize * 0.36,
+                  backgroundColor: colors.primary + "1A",
+                  borderColor: colors.primary + "40",
+                  transform: [{ scale: scaleAnim }, { rotate: spinCcw }],
+                },
+              ]}
+            />
+
+            <TouchableOpacity
+              onPress={handleTogglePlay}
+              activeOpacity={0.9}
+              accessibilityLabel={
+                isActive ? "Pause breathing" : "Tap companion to begin breathing"
+              }
+              style={styles.mascotTouch}
             >
-              <LinearGradient
-                colors={[
-                  colors.primary,
-                  isDark ? "#38BDF8" : "#0F766E",
-                ]}
-                start={{ x: 0.15, y: 0.1 }}
-                end={{ x: 0.85, y: 0.9 }}
-                style={StyleSheet.absoluteFill}
+              <YogaMascot
+                avatarId={user?.companionAvatar}
+                size={mascotSize}
+                scaleAnim={scaleAnim}
+                isActive={isActive}
+                phaseName={currentPhase.name}
               />
-            </Animated.View>
+            </TouchableOpacity>
+          </View>
 
-            <View pointerEvents="none" style={styles.orbLabelWrap}>
-              {isActive ? (
-                <>
-                  <Text style={[styles.phaseText, { color: onPrimaryText }]}>
-                    {currentPhase.name}
-                  </Text>
-                  <Text style={[styles.countdownText, { color: onPrimaryText }]}>
-                    {phaseSecondsLeft}s
-                  </Text>
-                </>
-              ) : (
-                <>
-                  <Ionicons
-                    name="play"
-                    size={22}
-                    color={onPrimaryText}
-                    style={{ marginLeft: 2, marginBottom: 2 }}
-                  />
-                  <Text style={[styles.phaseText, { color: onPrimaryText }]}>
-                    {sessionElapsedSec > 0 ? "Paused" : "Start"}
-                  </Text>
-                </>
-              )}
-            </View>
-          </TouchableOpacity>
+          {/* Phase Pill + Live Cue + Rhythm Badges (Non-overlapping flex layout) */}
+          <View style={styles.cueSection}>
+            <LinearGradient
+              colors={
+                isActive
+                  ? [colors.primary, isDark ? "#38BDF8" : "#0F766E"]
+                  : [colors.surfaceElevated, colors.surfaceElevated]
+              }
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={[
+                styles.phaseBadgePill,
+                !isActive && { borderWidth: 1, borderColor: colors.border },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.phasePillText,
+                  { color: isActive ? onPrimaryText : colors.text },
+                ]}
+              >
+                {isActive
+                  ? `${currentPhase.name}  •  ${phaseSecondsLeft}s`
+                  : sessionElapsedSec > 0
+                  ? "Paused — Tap to resume"
+                  : `Breathe with ${activeCompanion.name}`}
+              </Text>
+            </LinearGradient>
 
-          {/* Plain-English Live Cue + Beat Sequence */}
-          <View style={styles.cueBox}>
             <Text style={[styles.cueText, { color: colors.text }]}>
               {isActive ? currentPhase.cue : activePreset.subtitle}
             </Text>
@@ -869,8 +971,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 8,
+    paddingTop: 10,
+    paddingBottom: 6,
   },
   screenTitle: { fontSize: 24, fontWeight: "800" },
   screenSub: { fontSize: 12.5, marginTop: 2 },
@@ -890,9 +992,9 @@ const styles = StyleSheet.create({
     paddingTop: 4,
   },
   presetCard: {
-    width: 158,
+    width: 156,
     paddingHorizontal: 13,
-    paddingVertical: 11,
+    paddingVertical: 10,
     borderRadius: 18,
     borderWidth: 1.5,
     gap: 3,
@@ -910,21 +1012,45 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "center",
     gap: 8,
-    marginTop: 12,
+    marginTop: 10,
     paddingHorizontal: 20,
   },
   durationChip: {
-    paddingHorizontal: 13,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  durationText: { fontSize: 11.5, fontWeight: "700" },
+  soundRow: {
+    paddingHorizontal: 20,
+    gap: 7,
+    marginTop: 8,
+    justifyContent: "center",
+    flexGrow: 1,
+  },
+  soundChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 11,
     paddingVertical: 6,
     borderRadius: 13,
     borderWidth: 1,
   },
-  durationText: { fontSize: 12, fontWeight: "700" },
+  soundChipText: { fontSize: 11.5, fontWeight: "600" },
   centerStage: {
     flex: 1,
+    justifyContent: "space-evenly",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 6,
+  },
+  mascotStage: {
     justifyContent: "center",
     alignItems: "center",
-    paddingHorizontal: 24,
+    position: "relative",
+    minHeight: 165,
   },
   glowRing: {
     position: "absolute",
@@ -934,29 +1060,24 @@ const styles = StyleSheet.create({
     position: "absolute",
     borderWidth: 1,
   },
-  orbTouchWrap: {
+  mascotTouch: {
     justifyContent: "center",
     alignItems: "center",
   },
-  orbShell: {
-    overflow: "hidden",
-    justifyContent: "center",
+  cueSection: {
     alignItems: "center",
+    gap: 9,
+    width: "100%",
   },
-  orbLabelWrap: {
-    position: "absolute",
-    alignItems: "center",
-    justifyContent: "center",
+  phaseBadgePill: {
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+    borderRadius: 18,
   },
-  phaseText: { fontSize: 20, fontWeight: "800" },
-  countdownText: { fontSize: 14, fontWeight: "700", opacity: 0.85, marginTop: 2 },
-  cueBox: {
-    position: "absolute",
-    bottom: 10,
-    left: 20,
-    right: 20,
-    alignItems: "center",
-    gap: 10,
+  phasePillText: {
+    fontSize: 13.5,
+    fontWeight: "800",
+    letterSpacing: 0.2,
   },
   cueText: {
     fontSize: 14,
@@ -985,16 +1106,8 @@ const styles = StyleSheet.create({
   completeCard: {
     borderRadius: 24,
     borderWidth: 1,
-    padding: 22,
+    padding: 20,
     alignItems: "center",
-  },
-  completeIconCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 12,
   },
   completeTitle: { fontSize: 22, fontWeight: "800" },
   completeMeta: { fontSize: 13.5, marginTop: 4, textAlign: "center" },
@@ -1005,8 +1118,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 12,
-    marginTop: 14,
-    marginBottom: 18,
+    marginTop: 12,
+    marginBottom: 16,
   },
   savedPillText: { fontSize: 12, fontWeight: "700" },
   postActionsCol: { width: "100%", gap: 10 },
@@ -1024,7 +1137,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 20,
   },
-  statsText: { fontSize: 12.5, fontWeight: "600", marginBottom: 12 },
+  statsText: { fontSize: 12.5, fontWeight: "600", marginBottom: 10 },
   controlsRow: {
     flexDirection: "row",
     alignItems: "center",
