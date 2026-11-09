@@ -15,6 +15,8 @@ export const AuthProvider = ({ children }) => {
   const [localSetupDone, setLocalSetupDone] = useState(false);
 
   useEffect(() => {
+    let active = true;
+
     (async () => {
       try {
         const [storedUser, storedToken, seenOnboarding] = await Promise.all([
@@ -23,6 +25,7 @@ export const AuthProvider = ({ children }) => {
           AsyncStorage.getItem(ONBOARDED_KEY),
         ]);
 
+        if (!active) return;
         setHasSeenOnboarding(seenOnboarding === "true");
 
         if (storedUser && storedToken && storedToken !== "offline_token") {
@@ -30,38 +33,52 @@ export const AuthProvider = ({ children }) => {
           setUser(parsedUser);
 
           const doneFlag = await AsyncStorage.getItem(setupDoneKey(parsedUser.id));
+          if (!active) return;
           setLocalSetupDone(Boolean(parsedUser.hasOnboarded) || doneFlag === "true");
+          setLoading(false);
 
-          try {
-            const fresh = await api.getMe();
-            if (fresh?.user) {
-              setUser(fresh.user);
-              await AsyncStorage.setItem("solace_user", JSON.stringify(fresh.user));
-              if (fresh.user.hasOnboarded) {
-                setLocalSetupDone(true);
-                await AsyncStorage.setItem(setupDoneKey(fresh.user.id), "true");
+          // Verify session silently without blocking splash dismissal
+          api
+            .getMe()
+            .then(async (fresh) => {
+              const currentToken = await AsyncStorage.getItem("solace_token");
+              if (!active || !currentToken || currentToken !== storedToken) return;
+              if (fresh?.user) {
+                setUser(fresh.user);
+                await AsyncStorage.setItem("solace_user", JSON.stringify(fresh.user));
+                if (fresh.user.hasOnboarded) {
+                  setLocalSetupDone(true);
+                  await AsyncStorage.setItem(setupDoneKey(fresh.user.id), "true");
+                }
               }
-            }
-          } catch (err) {
-            if (
-              err.message?.includes("Invalid") ||
-              err.message?.includes("not found") ||
-              err.message?.includes("Access token")
-            ) {
-              await AsyncStorage.multiRemove(["solace_token", "solace_user"]);
-              setUser(null);
-              setLocalSetupDone(false);
-            }
-          }
+            })
+            .catch(async (err) => {
+              const currentToken = await AsyncStorage.getItem("solace_token");
+              if (!active || !currentToken || currentToken !== storedToken) return;
+              if (
+                err.message?.includes("Invalid") ||
+                err.message?.includes("not found") ||
+                err.message?.includes("Access token")
+              ) {
+                await AsyncStorage.multiRemove(["solace_token", "solace_user"]);
+                setUser(null);
+                setLocalSetupDone(false);
+              }
+            });
+          return;
         } else {
           await AsyncStorage.multiRemove(["solace_token", "solace_user"]);
         }
       } catch (e) {
         console.warn("Failed to load user session", e);
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     })();
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   const saveSession = async (userData, token) => {

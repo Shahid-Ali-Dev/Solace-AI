@@ -608,7 +608,10 @@ export default function AnimatedSplash({ readyToDismiss, onFinished }) {
 const styles = StyleSheet.create({
   overlay: {
     ...StyleSheet.absoluteFillObject,
+    width: "100%",
+    height: "100%",
     zIndex: 9999,
+    elevation: 9999,
     justifyContent: "center",
     alignItems: "center",
     overflow: "hidden",

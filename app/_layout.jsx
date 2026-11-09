@@ -1,6 +1,6 @@
 // app/_layout.jsx
 import React, { useEffect, useState, useRef, useCallback } from "react";
-import { Platform, View } from "react-native";
+import { Modal, Platform, View, StyleSheet } from "react-native";
 import { Stack, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import * as Notifications from "expo-notifications";
@@ -25,6 +25,9 @@ function RootContent() {
   const segments = useSegments();
 
   const [layoutReady, setLayoutReady] = useState(false);
+  const [splashWindowReady, setSplashWindowReady] = useState(
+    Platform.OS === "web"
+  );
   const [minSplashDone, setMinSplashDone] = useState(false);
   const [splashRemoved, setSplashRemoved] = useState(false);
   const [initialRouted, setInitialRouted] = useState(false);
@@ -66,19 +69,26 @@ function RootContent() {
     [router]
   );
 
-  // Hide native OS splash only after theme is resolved and root view has laid out
+  // Fallback timer in case Android Modal onShow does not fire on initial mount
   useEffect(() => {
-    if (resolvedThemeLoaded && layoutReady) {
+    if (!resolvedThemeLoaded || splashWindowReady) return;
+    const t = setTimeout(() => setSplashWindowReady(true), 140);
+    return () => clearTimeout(t);
+  }, [resolvedThemeLoaded, splashWindowReady]);
+
+  // Hide native OS splash only after theme, root layout, and splash overlay are ready
+  useEffect(() => {
+    if (resolvedThemeLoaded && layoutReady && splashWindowReady) {
       SplashScreen.hideAsync().catch(() => {});
     }
-  }, [resolvedThemeLoaded, layoutReady]);
+  }, [resolvedThemeLoaded, layoutReady, splashWindowReady]);
 
-  // Start minimum splash duration once AnimatedSplash mounts in resolved theme
+  // Start minimum splash duration once AnimatedSplash is visible
   useEffect(() => {
-    if (!resolvedThemeLoaded) return;
+    if (!resolvedThemeLoaded || !splashWindowReady) return;
     const t = setTimeout(() => setMinSplashDone(true), 1750);
     return () => clearTimeout(t);
-  }, [resolvedThemeLoaded]);
+  }, [resolvedThemeLoaded, splashWindowReady]);
 
   // Auth, onboarding, and setup route guards
   useEffect(() => {
@@ -224,6 +234,7 @@ function RootContent() {
 
   const readyToDismiss =
     resolvedThemeLoaded && !authLoading && minSplashDone && initialRouted;
+  const showSplash = resolvedThemeLoaded && !splashRemoved;
 
   return (
     <View
@@ -231,39 +242,73 @@ function RootContent() {
       onLayout={() => setLayoutReady(true)}
     >
       <StatusBar style={isDark ? "light" : "dark"} />
-      <Stack
-        screenOptions={{
-          headerShown: false,
-          contentStyle: { backgroundColor: colors.background },
-        }}
-      >
-        <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="onboarding" options={{ animation: "fade" }} />
-        <Stack.Screen
-          name="login"
-          options={{ animation: "fade_from_bottom", gestureEnabled: false }}
-        />
-        <Stack.Screen
-          name="setup"
-          options={{ animation: "slide_from_right", gestureEnabled: false }}
-        />
-        <Stack.Screen
-          name="mood-assessment"
-          options={{ animation: "slide_from_right" }}
-        />
-        <Stack.Screen
-          name="reminders"
-          options={{ animation: "slide_from_right" }}
-        />
-        <Stack.Screen name="profile" options={{ presentation: "modal" }} />
-      </Stack>
+      <View style={{ flex: 1, zIndex: 1, elevation: 0 }} collapsable={false}>
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: colors.background },
+          }}
+        >
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="onboarding" options={{ animation: "fade" }} />
+          <Stack.Screen
+            name="login"
+            options={{ animation: "fade_from_bottom", gestureEnabled: false }}
+          />
+          <Stack.Screen
+            name="setup"
+            options={{ animation: "slide_from_right", gestureEnabled: false }}
+          />
+          <Stack.Screen
+            name="mood-assessment"
+            options={{ animation: "slide_from_right" }}
+          />
+          <Stack.Screen
+            name="reminders"
+            options={{ animation: "slide_from_right" }}
+          />
+          <Stack.Screen name="profile" options={{ presentation: "modal" }} />
+        </Stack>
+      </View>
 
-      {resolvedThemeLoaded && !splashRemoved && (
-        <AnimatedSplash
-          readyToDismiss={readyToDismiss}
-          onFinished={() => setSplashRemoved(true)}
+      {/* Brief solid shield until native Modal window finishes opening */}
+      {Platform.OS !== "web" && !splashRemoved && !splashWindowReady && (
+        <View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFillObject,
+            {
+              backgroundColor: colors.background,
+              zIndex: 9998,
+              elevation: 9998,
+            },
+          ]}
         />
       )}
+
+      {showSplash &&
+        (Platform.OS === "web" ? (
+          <AnimatedSplash
+            readyToDismiss={readyToDismiss}
+            onFinished={() => setSplashRemoved(true)}
+          />
+        ) : (
+          <Modal
+            visible={showSplash}
+            transparent
+            statusBarTranslucent
+            navigationBarTranslucent
+            hardwareAccelerated
+            animationType="none"
+            onShow={() => setSplashWindowReady(true)}
+            onRequestClose={() => {}}
+          >
+            <AnimatedSplash
+              readyToDismiss={readyToDismiss}
+              onFinished={() => setSplashRemoved(true)}
+            />
+          </Modal>
+        ))}
     </View>
   );
 }
