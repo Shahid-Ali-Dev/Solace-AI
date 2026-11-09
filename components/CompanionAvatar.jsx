@@ -351,9 +351,11 @@ function FemaleCharacterSvg({ companion, size, blinkAnim, sparkleAnim }) {
         )}
       </Svg>
 
-      {/* Open Animated Eyes Layer (Centered at y=50 for clean scaleY blink) */}
+      {/* Open Animated Eyes Layer */}
       <Animated.View
         pointerEvents="none"
+        renderToHardwareTextureAndroid
+        shouldRasterizeIOS
         style={[
           StyleSheet.absoluteFill,
           { transform: [{ scaleY: blinkAnim }] },
@@ -402,9 +404,11 @@ function FemaleCharacterSvg({ companion, size, blinkAnim, sparkleAnim }) {
         </Svg>
       </Animated.View>
 
-      {/* Closed Eyelashes Layer (Fades in gently during blink) */}
+      {/* Closed Eyelashes Layer */}
       <Animated.View
         pointerEvents="none"
+        renderToHardwareTextureAndroid
+        shouldRasterizeIOS
         style={[StyleSheet.absoluteFill, { opacity: closedEyeOpacity }]}
       >
         <Svg width={size} height={size} viewBox="0 0 100 100">
@@ -428,6 +432,8 @@ function FemaleCharacterSvg({ companion, size, blinkAnim, sparkleAnim }) {
       {/* Ambient Sparkles Layer */}
       <Animated.View
         pointerEvents="none"
+        renderToHardwareTextureAndroid
+        shouldRasterizeIOS
         style={[
           StyleSheet.absoluteFill,
           {

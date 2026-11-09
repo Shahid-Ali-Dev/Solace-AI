@@ -1,30 +1,46 @@
-// backend/context/AuthContext.jsx
+// context/AuthContext.jsx
 import React, { createContext, useContext, useState, useEffect } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { api } from "../services/api";
 
 const AuthContext = createContext();
 
+const ONBOARDED_KEY = "solace_has_onboarded";
+const setupDoneKey = (userId) => `solace_setup_done_${userId}`;
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [hasSeenOnboarding, setHasSeenOnboarding] = useState(false);
+  const [localSetupDone, setLocalSetupDone] = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
-        const [storedUser, storedToken] = await Promise.all([
+        const [storedUser, storedToken, seenOnboarding] = await Promise.all([
           AsyncStorage.getItem("solace_user"),
           AsyncStorage.getItem("solace_token"),
+          AsyncStorage.getItem(ONBOARDED_KEY),
         ]);
 
+        setHasSeenOnboarding(seenOnboarding === "true");
+
         if (storedUser && storedToken && storedToken !== "offline_token") {
-          setUser(JSON.parse(storedUser));
-          // Verify token silently in background against backend
+          const parsedUser = JSON.parse(storedUser);
+          setUser(parsedUser);
+
+          const doneFlag = await AsyncStorage.getItem(setupDoneKey(parsedUser.id));
+          setLocalSetupDone(Boolean(parsedUser.hasOnboarded) || doneFlag === "true");
+
           try {
             const fresh = await api.getMe();
             if (fresh?.user) {
               setUser(fresh.user);
               await AsyncStorage.setItem("solace_user", JSON.stringify(fresh.user));
+              if (fresh.user.hasOnboarded) {
+                setLocalSetupDone(true);
+                await AsyncStorage.setItem(setupDoneKey(fresh.user.id), "true");
+              }
             }
           } catch (err) {
             if (
@@ -34,6 +50,7 @@ export const AuthProvider = ({ children }) => {
             ) {
               await AsyncStorage.multiRemove(["solace_token", "solace_user"]);
               setUser(null);
+              setLocalSetupDone(false);
             }
           }
         } else {
@@ -50,7 +67,16 @@ export const AuthProvider = ({ children }) => {
   const saveSession = async (userData, token) => {
     await AsyncStorage.setItem("solace_token", token);
     await AsyncStorage.setItem("solace_user", JSON.stringify(userData));
+    const doneFlag = await AsyncStorage.getItem(setupDoneKey(userData.id));
+    setLocalSetupDone(Boolean(userData.hasOnboarded) || doneFlag === "true");
     setUser(userData);
+  };
+
+  const completeOnboarding = async () => {
+    setHasSeenOnboarding(true);
+    try {
+      await AsyncStorage.setItem(ONBOARDED_KEY, "true");
+    } catch {}
   };
 
   const login = async (email, password) => {
@@ -84,37 +110,65 @@ export const AuthProvider = ({ children }) => {
         await saveSession(data.user, data.token);
       }
       return data;
-    } catch (e) {
-      const tempGuest = { id: "temp_guest", name: "Guest Explorer", isGuest: true };
+    } catch {
+      const tempGuest = {
+        id: "temp_guest",
+        name: "Guest Explorer",
+        isGuest: true,
+        hasOnboarded: false,
+      };
+      setLocalSetupDone(false);
       setUser(tempGuest);
-      return { user: tempGuest, offline: true };
+      return { user: tempGuest, isNewUser: true, offline: true };
     }
   };
 
   const updateProfile = async (updates) => {
-    try {
-        const res = await api.updateProfile(updates);
-        const updatedUser = { ...user, ...(res?.user || updates) };
-        await AsyncStorage.setItem("solace_user", JSON.stringify(updatedUser));
-        setUser(updatedUser);
-        return updatedUser;
-    } catch (error) {
-        console.error("Failed to update profile:", error);
-        throw error;
+    if (user?.id === "temp_guest") {
+      const updatedUser = { ...user, ...updates };
+      setUser(updatedUser);
+      return updatedUser;
     }
+
+    const res = await api.updateProfile(updates);
+    const updatedUser = { ...user, ...(res?.user || updates) };
+    await AsyncStorage.setItem("solace_user", JSON.stringify(updatedUser));
+    setUser(updatedUser);
+    return updatedUser;
+  };
+
+  const completeSetup = async (updates = {}) => {
+    const updatedUser = await updateProfile({
+      ...updates,
+      hasOnboarded: true,
+    });
+    setLocalSetupDone(true);
+    await completeOnboarding();
+    if (updatedUser?.id) {
+      try {
+        await AsyncStorage.setItem(setupDoneKey(updatedUser.id), "true");
+      } catch {}
+    }
+    return updatedUser;
   };
 
   const logout = async () => {
-    await AsyncStorage.removeItem("solace_token");
-    await AsyncStorage.removeItem("solace_user");
+    await AsyncStorage.multiRemove(["solace_token", "solace_user"]);
+    setLocalSetupDone(false);
     setUser(null);
   };
+
+  const needsSetup = Boolean(user && !user.hasOnboarded && !localSetupDone);
 
   return (
     <AuthContext.Provider
       value={{
         user,
         loading,
+        hasSeenOnboarding,
+        needsSetup,
+        completeOnboarding,
+        completeSetup,
         login,
         register,
         loginAsGuest,

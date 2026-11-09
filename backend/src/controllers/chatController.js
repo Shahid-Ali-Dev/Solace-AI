@@ -147,42 +147,39 @@ export const sendMessage = async (req, res) => {
     if (sessionId) {
       const existingSession = await prisma.chatSession.findFirst({
         where: { id: sessionId, userId },
+        select: { id: true },
       });
       if (existingSession) currentSessionId = existingSession.id;
-    }
-
-    if (!currentSessionId) {
-      const title =
-        cleanMessage.length > 34
-          ? `${cleanMessage.slice(0, 34)}...`
-          : cleanMessage;
-      const newSession = await prisma.chatSession.create({
-        data: { userId, title },
-      });
-      currentSessionId = newSession.id;
     }
 
     const [user, recentMoods, recentMessages, pastSessions] = await Promise.all([
       prisma.user.findUnique({
         where: { id: userId },
-        select: { name: true, wellnessGoal: true, companionAvatar: true },
+        select: {
+          name: true,
+          wellnessGoal: true,
+          companionAvatar: true,
+          aiMemoryEnabled: true,
+        },
       }),
       prisma.moodLog.findMany({
         where: { userId },
         orderBy: { createdAt: "desc" },
         take: 5,
-        select: { mood: true, note: true, createdAt: true },
+        select: { mood: true, intensity: true, note: true, createdAt: true },
       }),
-      prisma.chatMessage.findMany({
-        where: { sessionId: currentSessionId },
-        orderBy: { createdAt: "desc" },
-        take: 14,
-        select: { sender: true, content: true },
-      }),
+      currentSessionId
+        ? prisma.chatMessage.findMany({
+            where: { sessionId: currentSessionId },
+            orderBy: { createdAt: "desc" },
+            take: 14,
+            select: { sender: true, content: true },
+          })
+        : Promise.resolve([]),
       prisma.chatSession.findMany({
         where: {
           userId,
-          id: { not: currentSessionId },
+          ...(currentSessionId ? { id: { not: currentSessionId } } : {}),
           messages: { some: {} },
         },
         orderBy: { updatedAt: "desc" },
@@ -197,30 +194,40 @@ export const sendMessage = async (req, res) => {
       }),
     ]);
 
+    if (!user) {
+      return res.status(401).json({ error: "Session invalid. Please sign in again." });
+    }
+
     const realName =
-      user?.name && !["Friend", "Guest Explorer"].includes(user.name.trim())
+      user.name && !["Friend", "Guest Explorer"].includes(user.name.trim())
         ? user.name.trim()
         : null;
 
-    const moodPattern = recentMoods.length
-      ? recentMoods
-          .map((m) => {
-            const when = formatRelativeTime(m.createdAt);
-            const noteText = m.note ? ` ("${clip(m.note, 50)}")` : "";
-            return `${m.mood} [${when}]${noteText}`;
-          })
-          .join("; ")
-      : "none logged yet";
+    const allowMemory = user.aiMemoryEnabled !== false;
+
+    const moodPattern = allowMemory
+      ? recentMoods.length
+        ? recentMoods
+            .map((m) => {
+              const when = formatRelativeTime(m.createdAt);
+              const noteText = m.note ? ` ("${clip(m.note, 50)}")` : "";
+              return `${m.mood} (${m.intensity || 3}/5) [${when}]${noteText}`;
+            })
+            .join("; ")
+        : "none logged yet"
+      : "paused by user preference";
 
     const userContext = [
       realName ? `Name: ${realName}` : "Name: not set yet",
-      `Focus goal: ${user?.wellnessGoal || "Calm & Stress Relief"}`,
+      `Focus goal: ${user.wellnessGoal || "Calm & Stress Relief"}`,
       `Recent mood trend: ${moodPattern}`,
-      `Earlier conversations (last ${pastSessions.length} windows):\n${buildCrossWindowMemory(pastSessions)}`,
+      allowMemory
+        ? `Earlier conversations (last ${pastSessions.length} windows):\n${buildCrossWindowMemory(pastSessions)}`
+        : "Earlier conversations: paused by user preference (use only current chat turns).",
     ].join("\n");
 
     const previousMessages = trimHistoryToBudget(recentMessages);
-    const companion = getCompanionPersona(user?.companionAvatar);
+    const companion = getCompanionPersona(user.companionAvatar);
 
     const conversationPayload = [
       {
@@ -242,23 +249,49 @@ export const sendMessage = async (req, res) => {
 
     const { reply, followUpQuestions } = parseJsonPayload(rawReply);
 
-    await prisma.$transaction([
-      prisma.chatMessage.create({
-        data: { sessionId: currentSessionId, sender: "user", content: cleanMessage },
-      }),
-      prisma.chatMessage.create({
+    if (!currentSessionId) {
+      const title =
+        cleanMessage.length > 34
+          ? `${cleanMessage.slice(0, 34).trim()}...`
+          : cleanMessage;
+
+      const createdSession = await prisma.chatSession.create({
         data: {
-          sessionId: currentSessionId,
-          sender: "assistant",
-          content: reply,
-          suggestions: JSON.stringify(followUpQuestions),
+          userId,
+          title,
+          messages: {
+            create: [
+              { sender: "user", content: cleanMessage },
+              {
+                sender: "assistant",
+                content: reply,
+                suggestions: JSON.stringify(followUpQuestions),
+              },
+            ],
+          },
         },
-      }),
-      prisma.chatSession.update({
-        where: { id: currentSessionId },
-        data: { updatedAt: new Date() },
-      }),
-    ]);
+        select: { id: true },
+      });
+      currentSessionId = createdSession.id;
+    } else {
+      await prisma.$transaction([
+        prisma.chatMessage.create({
+          data: { sessionId: currentSessionId, sender: "user", content: cleanMessage },
+        }),
+        prisma.chatMessage.create({
+          data: {
+            sessionId: currentSessionId,
+            sender: "assistant",
+            content: reply,
+            suggestions: JSON.stringify(followUpQuestions),
+          },
+        }),
+        prisma.chatSession.update({
+          where: { id: currentSessionId },
+          data: { updatedAt: new Date() },
+        }),
+      ]);
+    }
 
     res.json({
       sessionId: currentSessionId,
@@ -274,7 +307,10 @@ export const sendMessage = async (req, res) => {
 export const getSessions = async (req, res) => {
   try {
     const sessions = await prisma.chatSession.findMany({
-      where: { userId: req.user.userId },
+      where: {
+        userId: req.user.userId,
+        messages: { some: {} },
+      },
       orderBy: { updatedAt: "desc" },
       include: {
         messages: {

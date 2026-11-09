@@ -1,5 +1,5 @@
 // app/profile.jsx
-import React, { useState, useMemo, useEffect, useRef } from "react";
+import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -9,18 +9,20 @@ import {
   ScrollView,
   ActivityIndicator,
   Modal,
+  Switch,
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { useRouter, useNavigation } from "expo-router";
+import { useRouter, useNavigation, useFocusEffect } from "expo-router";
 import { useTheme } from "../context/ThemeContext";
 import { useAuth } from "../context/AuthContext";
 import CompanionPicker from "../components/CompanionPicker";
 import UserAvatarPicker from "../components/UserAvatarPicker";
 import AvatarImage from "../components/AvatarImage";
+import { loadReminders } from "../services/notifications";
 import {
   USER_AVATARS,
   WELLNESS_GOALS,
@@ -36,9 +38,9 @@ export default function ProfileScreen() {
   const router = useRouter();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  
+
   const initialAvatar = user?.avatar || USER_AVATARS[0].url;
-  
+
   const [isNameFocused, setIsNameFocused] = useState(false);
   const [name, setName] = useState(user?.name || "Friend");
   const [selectedBaseUrl, setSelectedBaseUrl] = useState(stripBgParam(initialAvatar));
@@ -46,6 +48,10 @@ export default function ProfileScreen() {
   const [selectedGoal, setSelectedGoal] = useState(
     user?.wellnessGoal || WELLNESS_GOALS[0]
   );
+  const [aiMemoryEnabled, setAiMemoryEnabled] = useState(
+    user?.aiMemoryEnabled !== false
+  );
+  const [activeRemindersCount, setActiveRemindersCount] = useState(0);
 
   const [saving, setSaving] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -64,7 +70,25 @@ export default function ProfileScreen() {
     setSelectedBaseUrl(stripBgParam(nextAvatar));
     setSelectedBg(extractBgParam(nextAvatar));
     setSelectedGoal(user?.wellnessGoal || WELLNESS_GOALS[0]);
+    setAiMemoryEnabled(user?.aiMemoryEnabled !== false);
   }, [user?.id]);
+
+  // Refresh reminder badge count on open and when returning from /reminders
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      loadReminders(user?.id)
+        .then((list) => {
+          if (active && Array.isArray(list)) {
+            setActiveRemindersCount(list.filter((r) => r.enabled).length);
+          }
+        })
+        .catch(() => {});
+      return () => {
+        active = false;
+      };
+    }, [user?.id])
+  );
 
   const activeAvatarUri = useMemo(
     () => buildAvatarUrl(selectedBaseUrl, selectedBg),
@@ -77,11 +101,13 @@ export default function ProfileScreen() {
     [initialAvatar]
   );
   const baselineGoal = user?.wellnessGoal || WELLNESS_GOALS[0];
+  const baselineAiMemory = user?.aiMemoryEnabled !== false;
 
   const hasUnsavedChanges =
     name.trim() !== baselineName ||
     activeAvatarUri !== baselineAvatar ||
-    selectedGoal !== baselineGoal;
+    selectedGoal !== baselineGoal ||
+    aiMemoryEnabled !== baselineAiMemory;
 
   hasUnsavedRef.current = hasUnsavedChanges;
 
@@ -152,6 +178,13 @@ export default function ProfileScreen() {
     setSaveError("");
   };
 
+  const handleMemoryToggle = (val) => {
+    triggerHaptic();
+    setAiMemoryEnabled(val);
+    setSavedSuccess(false);
+    setSaveError("");
+  };
+
   const persistChanges = async () => {
     if (!name.trim()) {
       setSaveError("Please enter a display name.");
@@ -168,6 +201,7 @@ export default function ProfileScreen() {
         name: name.trim(),
         avatar: activeAvatarUri,
         wellnessGoal: selectedGoal,
+        aiMemoryEnabled,
       });
       return true;
     } catch (err) {
@@ -469,7 +503,7 @@ export default function ProfileScreen() {
             />
           </View>
 
-          {/* 2. Primary Wellness Intention (Grouped with identity, above visual pickers) */}
+          {/* 2. Primary Wellness Intention */}
           <Text
             style={[styles.sectionHeading, { color: colors.text, marginTop: 22 }]}
           >
@@ -521,6 +555,93 @@ export default function ProfileScreen() {
 
           {/* 4. Matching Horizontal AI Companion Selector */}
           <CompanionPicker layout="horizontal" />
+
+          {/* 5. Preferences & Privacy */}
+          <Text
+            style={[styles.sectionHeading, { color: colors.text, marginTop: 22 }]}
+          >
+            Preferences & Privacy
+          </Text>
+
+          <TouchableOpacity
+            onPress={() => {
+              triggerHaptic();
+              router.push("/reminders");
+            }}
+            activeOpacity={0.82}
+            style={[
+              styles.prefCard,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+            ]}
+          >
+            <View
+              style={[
+                styles.prefIconBox,
+                { backgroundColor: colors.primary + "1C" },
+              ]}
+            >
+              <Ionicons
+                name="notifications-outline"
+                size={19}
+                color={colors.primary}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.prefTitle, { color: colors.text }]}>
+                Reminders & Gentle Nudges
+              </Text>
+              <Text style={[styles.prefDesc, { color: colors.textMuted }]}>
+                {activeRemindersCount > 0
+                  ? `${activeRemindersCount} active daily reminder${
+                      activeRemindersCount > 1 ? "s" : ""
+                    }`
+                  : "Set check-in, affirmation & breathing nudges"}
+              </Text>
+            </View>
+            <Ionicons
+              name="chevron-forward"
+              size={18}
+              color={colors.textMuted}
+            />
+          </TouchableOpacity>
+
+          <View
+            style={[
+              styles.prefCard,
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.border,
+                marginTop: 10,
+              },
+            ]}
+          >
+            <View
+              style={[
+                styles.prefIconBox,
+                { backgroundColor: colors.accent + "1C" },
+              ]}
+            >
+              <Ionicons
+                name="sparkles-outline"
+                size={19}
+                color={colors.accent}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.prefTitle, { color: colors.text }]}>
+                AI Memory & Context
+              </Text>
+              <Text style={[styles.prefDesc, { color: colors.textMuted }]}>
+                Let your companion remember mood trends & past chats
+              </Text>
+            </View>
+            <Switch
+              value={aiMemoryEnabled}
+              onValueChange={handleMemoryToggle}
+              trackColor={{ false: colors.border, true: colors.primary + "75" }}
+              thumbColor={aiMemoryEnabled ? colors.primary : colors.textMuted}
+            />
+          </View>
         </ScrollView>
 
         {/* Sticky Bottom Save Footer */}
@@ -818,6 +939,23 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   goalChipText: { fontSize: 13, fontWeight: "600" },
+  prefCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+  },
+  prefIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  prefTitle: { fontSize: 14, fontWeight: "700" },
+  prefDesc: { fontSize: 12, lineHeight: 16, marginTop: 2 },
   stickyFooter: {
     paddingHorizontal: 20,
     paddingTop: 12,

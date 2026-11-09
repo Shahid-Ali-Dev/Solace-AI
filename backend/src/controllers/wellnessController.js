@@ -64,3 +64,39 @@ export const getBreathingPresets = (req, res) => {
     },
   ]);
 };
+
+export const getReminderPreferences = async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.userId },
+      select: { reminderPrefs: true },
+    });
+    let reminders = null;
+    if (user?.reminderPrefs) {
+      try {
+        reminders = JSON.parse(user.reminderPrefs);
+      } catch {}
+    }
+    res.json({ reminders });
+  } catch (err) {
+    console.error("getReminderPreferences error:", err);
+    res.status(500).json({ error: "Failed to load reminder preferences" });
+  }
+};
+
+export const updateReminderPreferences = async (req, res) => {
+  try {
+    const { reminders } = req.body;
+    if (!Array.isArray(reminders)) {
+      return res.status(400).json({ error: "Reminders array is required" });
+    }
+    await prisma.user.update({
+      where: { id: req.user.userId },
+      data: { reminderPrefs: JSON.stringify(reminders.slice(0, 20)) },
+    });
+    res.json({ reminders });
+  } catch (err) {
+    console.error("updateReminderPreferences error:", err);
+    res.status(500).json({ error: "Failed to save reminder preferences" });
+  }
+};

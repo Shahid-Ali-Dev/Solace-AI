@@ -7,9 +7,8 @@ const getBaseUrl = () => {
   const envUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
   if (envUrl) {
     const cleaned = envUrl.replace(/\/$/, "");
-    // 10.0.2.2 only works inside Android Emulator; never use it on Web
     if (!(Platform.OS === "web" && cleaned.includes("10.0.2.2"))) {
-      return cleaned;
+      return cleaned.endsWith("/api") ? cleaned : `${cleaned}/api`;
     }
   }
 
@@ -74,9 +73,10 @@ export const api = {
   },
 
   register: async (name, email, password) => {
+    const headers = await getHeaders();
     const res = await fetchWithTimeout(`${BASE_URL}/auth/register`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ name, email, password }),
     });
     const data = await parseJsonSafe(res);
@@ -85,9 +85,10 @@ export const api = {
   },
 
   login: async (email, password) => {
+    const headers = await getHeaders();
     const res = await fetchWithTimeout(`${BASE_URL}/auth/login`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ email, password }),
     });
     const data = await parseJsonSafe(res);
@@ -96,9 +97,10 @@ export const api = {
   },
 
   googleLogin: async ({ idToken, accessToken }) => {
+    const headers = await getHeaders();
     const res = await fetchWithTimeout(`${BASE_URL}/auth/google`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ idToken, accessToken }),
     });
     const data = await parseJsonSafe(res);
@@ -143,11 +145,57 @@ export const api = {
     return data;
   },
 
+  updateMoodEntry: async (logId, { note, intensity, mood }) => {
+    const headers = await getHeaders();
+    const res = await fetchWithTimeout(`${BASE_URL}/mood/${logId}`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ note, intensity, mood }),
+    });
+    const data = await parseJsonSafe(res);
+    if (!res.ok) throw new Error(data.error || "Failed to update mood entry");
+    return data;
+  },
+
+  deleteMoodLog: async (logId) => {
+    const headers = await getHeaders();
+    const res = await fetchWithTimeout(`${BASE_URL}/mood/${logId}`, {
+      method: "DELETE",
+      headers,
+    });
+    const data = await parseJsonSafe(res);
+    if (!res.ok) throw new Error(data.error || "Failed to delete mood log");
+    return data;
+  },
+
+  getMoodHistory: async (days = 30, limit = 50) => {
+    const headers = await getHeaders();
+    const res = await fetchWithTimeout(
+      `${BASE_URL}/mood/history?days=${days}&limit=${limit}`,
+      { headers }
+    );
+    const data = await parseJsonSafe(res);
+    if (!res.ok) throw new Error(data.error || "Failed to load mood history");
+    return data;
+  },
+
+  getMoodSummary: async (tzOffset = new Date().getTimezoneOffset()) => {
+    const headers = await getHeaders();
+    const res = await fetchWithTimeout(
+      `${BASE_URL}/mood/summary?tzOffset=${tzOffset}`,
+      { headers }
+    );
+    const data = await parseJsonSafe(res);
+    if (!res.ok) throw new Error(data.error || "Failed to load mood summary");
+    return data;
+  },
+
   analyzeMoodAndSuggest: async (
     mood,
     note = "",
     logId = null,
-    localHour = new Date().getHours()
+    localHour = new Date().getHours(),
+    intensity = 3
   ) => {
     const headers = await getHeaders();
     const res = await fetchWithTimeout(
@@ -155,7 +203,7 @@ export const api = {
       {
         method: "POST",
         headers,
-        body: JSON.stringify({ mood, note, logId, localHour }),
+        body: JSON.stringify({ mood, note, logId, localHour, intensity }),
       },
       25000
     );
@@ -210,12 +258,58 @@ export const api = {
     return data;
   },
 
-  // Wellness
+  /// Wellness
   getAffirmation: async () => {
     const headers = await getHeaders();
     const res = await fetchWithTimeout(`${BASE_URL}/wellness/affirmation`, { headers });
     const data = await parseJsonSafe(res);
     if (!res.ok) throw new Error(data.error || "Affirmation fetch failed");
+    return data;
+  },
+
+  getReminders: async () => {
+    const headers = await getHeaders();
+    const res = await fetchWithTimeout(`${BASE_URL}/wellness/reminders`, { headers });
+    const data = await parseJsonSafe(res);
+    if (!res.ok) throw new Error(data.error || "Failed to fetch reminders");
+    return data;
+  },
+
+  saveReminders: async (reminders) => {
+    const headers = await getHeaders();
+    const res = await fetchWithTimeout(`${BASE_URL}/wellness/reminders`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ reminders }),
+    });
+    const data = await parseJsonSafe(res);
+    if (!res.ok) throw new Error(data.error || "Failed to save reminders");
+    return data;
+  },
+
+  getBreathingPresets: async () => {
+    const headers = await getHeaders();
+    const res = await fetchWithTimeout(`${BASE_URL}/wellness/breathing-presets`, {
+      headers,
+    });
+    const data = await parseJsonSafe(res);
+    if (!res.ok) throw new Error(data.error || "Breathing presets fetch failed");
+    return data;
+  },
+
+  assessMood: async (answers, note = "", localHour = new Date().getHours()) => {
+    const headers = await getHeaders();
+    const res = await fetchWithTimeout(
+      `${BASE_URL}/mood/assess`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ answers, note, localHour }),
+      },
+      25000
+    );
+    const data = await parseJsonSafe(res);
+    if (!res.ok) throw new Error(data.error || "Failed to evaluate mood");
     return data;
   },
 };

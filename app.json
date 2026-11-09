@@ -16,7 +16,13 @@
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#0B0F17"
       },
-      "package": "com.solace.wellness"
+      "package": "com.solace.wellness",
+      "softwareKeyboardLayoutMode": "resize",
+      "permissions": [
+        "POST_NOTIFICATIONS",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -25,7 +31,13 @@
     "plugins": [
       "expo-router",
       "expo-image",
-      "expo-notifications",
+      [
+        "expo-notifications",
+        {
+          "color": "#2DD4BF",
+          "defaultChannel": "solace-reminders"
+        }
+      ],
       [
         "@react-native-google-signin/google-signin",
         {
@@ -35,9 +47,13 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#0B0F17",
+          "backgroundColor": "#F8FAFC",
           "image": "./assets/icon.png",
-          "imageWidth": 180
+          "imageWidth": 180,
+          "dark": {
+            "backgroundColor": "#0B0F17",
+            "image": "./assets/icon.png"
+          }
         }
       ]
     ],

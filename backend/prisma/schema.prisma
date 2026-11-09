@@ -11,25 +11,31 @@ model User {
   id              String        @id @default(uuid())
   email           String?       @unique
   passwordHash    String?
+  reminderPrefs   String?
   name            String        @default("Friend")
   avatar          String        @default("https://api.dicebear.com/9.x/lorelei/png?seed=Lumi")
   companionAvatar String        @default("lumi_girl")
   wellnessGoal    String        @default("Calm & Stress Relief")
   isGuest         Boolean       @default(false)
   createdAt       DateTime      @default(now())
+  hasOnboarded    Boolean       @default(false)
+  aiMemoryEnabled Boolean       @default(true)
 
   moodLogs        MoodLog[]
   chatSessions    ChatSession[]
 }
 
 model MoodLog {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  mood      String   // "peaceful" | "anxious" | "tired" | "overwhelmed" | "grateful"
-  note      String?
-  intensity Int      @default(3) // 1 to 5
-  createdAt DateTime @default(now())
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mood       String   // "peaceful" | "anxious" | "tired" | "overwhelmed" | "grateful"
+  note       String?
+  intensity  Int      @default(3) // 1 to 5
+  aiSnapshot String?  // JSON string of { empathyMessage, suggestions }
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
 
 model ChatSession {

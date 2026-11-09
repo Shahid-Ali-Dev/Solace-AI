@@ -29,6 +29,7 @@ import { api } from "../../services/api";
 import CompanionAvatar from "../../components/CompanionAvatar";
 import CompanionPicker from "../../components/CompanionPicker";
 import { getCompanionById } from "../../constants/companions";
+import { markDailyHabit } from "../../utils/dailyHabits";
 
 const INITIAL_PROMPTS = [
   "I'm feeling overwhelmed today",
@@ -216,6 +217,7 @@ export default function ChatScreen() {
 
   const flatListRef = useRef(null);
   const restoredForUserRef = useRef(null);
+  const lastHandledStarterRef = useRef("");
 
   const stackSuggestionsVertically = Platform.OS !== "web" || width < 768;
 
@@ -229,23 +231,34 @@ export default function ChatScreen() {
     } catch {}
   };
 
-  // Clear local chat state on sign-out so re-login restores cleanly
+  // Clear on sign-out and restore last active conversation once per user
   useEffect(() => {
-    if (!authLoading && !user?.id) {
+    if (authLoading) return;
+
+    if (!user?.id) {
       restoredForUserRef.current = null;
+      lastHandledStarterRef.current = "";
       setSessionId(null);
       setSessions([]);
+      setInput("");
       setMessages([getIntroMessage()]);
+      return;
     }
-  }, [authLoading, user?.id]);
 
-  // Restore last active conversation once per authenticated user
-  useEffect(() => {
-    if (authLoading || !user?.id) return;
     if (restoredForUserRef.current === user.id) return;
     restoredForUserRef.current = user.id;
 
-    if (typeof starterPrompt === "string" && starterPrompt.trim()) return;
+    setSessionId(null);
+    setSessions([]);
+    setInput("");
+    setMessages([getIntroMessage(user?.name, activeCompanion.name)]);
+
+    if (typeof starterPrompt === "string" && starterPrompt.trim()) {
+      setLoadingSession(false);
+      return;
+    }
+
+    let cancelled = false;
 
     (async () => {
       setLoadingSession(true);
@@ -253,8 +266,10 @@ export default function ChatScreen() {
         const savedId = await AsyncStorage.getItem(getActiveSessionKey(user.id));
 
         if (savedId === NEW_CHAT_SENTINEL) {
-          setSessionId(null);
-          setMessages([getIntroMessage(user?.name, activeCompanion.name)]);
+          if (!cancelled) {
+            setSessionId(null);
+            setMessages([getIntroMessage(user?.name, activeCompanion.name)]);
+          }
           return;
         }
 
@@ -269,7 +284,7 @@ export default function ChatScreen() {
 
         if (targetSessionId) {
           const history = await api.getSessionMessages(targetSessionId);
-          if (Array.isArray(history) && history.length > 0) {
+          if (!cancelled && Array.isArray(history) && history.length > 0) {
             setSessionId(targetSessionId);
             setMessages(history);
             await persistActiveSession(targetSessionId, user.id);
@@ -277,15 +292,25 @@ export default function ChatScreen() {
           }
         }
 
-        setSessionId(null);
-        setMessages([getIntroMessage(user?.name, activeCompanion.name)]);
+        if (!cancelled) {
+          setSessionId(null);
+          setMessages([getIntroMessage(user?.name, activeCompanion.name)]);
+        }
       } catch {
-        setSessionId(null);
-        setMessages([getIntroMessage(user?.name, activeCompanion.name)]);
+        if (!cancelled) {
+          setSessionId(null);
+          setMessages([getIntroMessage(user?.name, activeCompanion.name)]);
+        }
       } finally {
-        setLoadingSession(false);
+        if (!cancelled) {
+          setLoadingSession(false);
+        }
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [authLoading, user?.id]);
 
   // Keep intro greeting synced when user name or companion changes
@@ -298,17 +323,24 @@ export default function ChatScreen() {
     });
   }, [user?.name, activeCompanion.name]);
 
-  // Consume Home starterPrompt once and clear URL param immediately
+  // Consume Home / Notification starterPrompt cleanly once
   useEffect(() => {
-    if (typeof starterPrompt === "string" && starterPrompt.trim()) {
-      const cleanPrompt = starterPrompt.trim();
-      setSessionId(null);
-      setMessages([getIntroMessage(user?.name, activeCompanion.name)]);
-      setInput(cleanPrompt);
-      persistActiveSession(NEW_CHAT_SENTINEL);
-      router.setParams({ starterPrompt: undefined });
+    const cleanPrompt =
+      typeof starterPrompt === "string" ? starterPrompt.trim() : "";
+    if (!cleanPrompt) {
+      lastHandledStarterRef.current = "";
+      return;
     }
-  }, [starterPrompt, user?.name, activeCompanion.name]);
+    if (cleanPrompt === lastHandledStarterRef.current) return;
+    lastHandledStarterRef.current = cleanPrompt;
+
+    setLoadingSession(false);
+    setSessionId(null);
+    setMessages([getIntroMessage(user?.name, activeCompanion.name)]);
+    setInput(cleanPrompt);
+    persistActiveSession(NEW_CHAT_SENTINEL);
+    router.setParams({ starterPrompt: "" });
+  }, [starterPrompt]);
 
   useEffect(() => {
     if (Platform.OS === "web") return;
@@ -363,6 +395,7 @@ export default function ChatScreen() {
         try {
           Haptics.selectionAsync();
         } catch {}
+        markDailyHabit(user?.id, "chat");
         setMessages((prev) => [
           ...prev,
           {
@@ -493,7 +526,7 @@ export default function ChatScreen() {
     <SafeAreaView edges={["top"]} style={[styles.container, { backgroundColor: colors.background }]}>
       <KeyboardAvoidingView
         style={styles.container}
-        behavior={Platform.OS === "web" ? undefined : "padding"}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
       >
         {/* Header with Customizable Animated Avatar */}
@@ -521,7 +554,7 @@ export default function ChatScreen() {
               <Text numberOfLines={1} style={[styles.headerStatus, { color: colors.primary }]}>
                 {loading
                   ? "Reflecting gently..."
-                  : `${activeCompanion.tagline} • Tap to switch`}
+                  : `${activeCompanion.tagline ? `${activeCompanion.tagline} • ` : ""}Tap to switch`}
               </Text>
             </View>
           </TouchableOpacity>
@@ -588,7 +621,7 @@ export default function ChatScreen() {
           />
         )}
 
-        {/* Saved Dynamic AI Follow-Up Questions (Vertical on Mobile, Horizontal on Desktop Web) */}
+        {/* Saved Dynamic AI Follow-Up Questions */}
         {!loading && !loadingSession && activeChips.length > 0 && !isKeyboardVisible && (
           <View style={styles.chipsWrapper}>
             {stackSuggestionsVertically ? (
