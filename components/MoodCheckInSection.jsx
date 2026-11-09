@@ -414,7 +414,7 @@ const MoodCheckInSection = memo(function MoodCheckInSection({
         <>
           <View style={styles.intensityRow}>
             <Text style={[styles.intensityLabel, { color: colors.textMuted }]}>
-              Intensity
+              Intensity ({moodIntensity}/5)
             </Text>
             <View style={styles.intensityPills}>
               {[1, 2, 3, 4, 5].map((lvl) => {

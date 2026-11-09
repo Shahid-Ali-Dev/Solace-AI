@@ -11,6 +11,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const VALID_MOODS = ["peaceful", "anxious", "tired", "overwhelmed", "grateful"];
 
 const clampIntensity = (val) => {
+  if (val === null || val === undefined || val === "") return 3;
   const num = Number(val);
   if (!Number.isFinite(num)) return 3;
   return Math.min(5, Math.max(1, Math.round(num)));
@@ -48,7 +49,9 @@ const epochToDayKey = (epoch) => {
 const computeStreaks = (logs = [], tzOffsetMinutes = 0) => {
   if (!logs.length) return { currentStreak: 0, longestStreak: 0 };
 
-  const uniqueKeysDesc = [...new Set(logs.map((l) => toLocalDayKey(l.createdAt, tzOffsetMinutes)))];
+  const uniqueKeysDesc = [
+    ...new Set(logs.map((l) => toLocalDayKey(l.createdAt, tzOffsetMinutes))),
+  ];
   const daySet = new Set(uniqueKeysDesc);
 
   const todayKey = toLocalDayKey(new Date(), tzOffsetMinutes);
@@ -68,7 +71,9 @@ const computeStreaks = (logs = [], tzOffsetMinutes = 0) => {
   }
 
   // Longest historical streak
-  const sortedEpochsAsc = uniqueKeysDesc.map(dayKeyToEpoch).sort((a, b) => a - b);
+  const sortedEpochsAsc = uniqueKeysDesc
+    .map(dayKeyToEpoch)
+    .sort((a, b) => a - b);
   let longestStreak = 0;
   let run = 0;
   for (let i = 0; i < sortedEpochsAsc.length; i += 1) {
@@ -113,15 +118,18 @@ const getDefaultPreset = (mood) => {
 const getMoodFallback = (mood, companionName) => {
   const presets = {
     peaceful: {
-      empathyMessage: "It's lovely when your mind finally gets a quiet window like this.",
+      empathyMessage:
+        "It's lovely when your mind finally gets a quiet window like this.",
       suggestions: [
         {
           id: "1",
           title: "Lock In This Calm",
           actionType: "micro_journal",
           duration: "1 min",
-          reason: "Notice what made today feel steady so you can revisit it later.",
-          journalPrompt: "What one small thing helped create this peaceful feeling?",
+          reason:
+            "Notice what made today feel steady so you can revisit it later.",
+          journalPrompt:
+            "What one small thing helped create this peaceful feeling?",
           quickChips: ["Quiet focus time", "Letting go of rush"],
           placeholder: "Write one line to remember...",
         },
@@ -130,7 +138,8 @@ const getMoodFallback = (mood, companionName) => {
           title: "2-Minute Savoring Pause",
           actionType: "guided_steps",
           duration: "2 mins",
-          reason: "Let your body register safety instead of rushing to the next task.",
+          reason:
+            "Let your body register safety instead of rushing to the next task.",
           timerSeconds: 60,
           steps: [
             "Drop your shoulders and soften your gaze.",
@@ -143,13 +152,16 @@ const getMoodFallback = (mood, companionName) => {
           title: "Protect This Headspace",
           actionType: "chat",
           duration: "3 mins",
-          reason: "Set one light boundary so this calm lasts into the rest of your day.",
-          starterPrompt: "I'm feeling peaceful right now—help me protect this energy today.",
+          reason:
+            "Set one light boundary so this calm lasts into the rest of your day.",
+          starterPrompt:
+            "I'm feeling peaceful right now—help me protect this energy today.",
         },
       ],
     },
     grateful: {
-      empathyMessage: "Holding onto moments of gratitude rewires how heavy days feel later.",
+      empathyMessage:
+        "Holding onto moments of gratitude rewires how heavy days feel later.",
       suggestions: [
         {
           id: "1",
@@ -180,12 +192,14 @@ const getMoodFallback = (mood, companionName) => {
           actionType: "chat",
           duration: "2 mins",
           reason: "Celebrate small progress without downplaying it.",
-          starterPrompt: "I'm feeling grateful today and want to savor a small win.",
+          starterPrompt:
+            "I'm feeling grateful today and want to savor a small win.",
         },
       ],
     },
     tired: {
-      empathyMessage: "Running on low battery makes everything look harder than it actually is.",
+      empathyMessage:
+        "Running on low battery makes everything look harder than it actually is.",
       suggestions: [
         {
           id: "1",
@@ -213,15 +227,18 @@ const getMoodFallback = (mood, companionName) => {
           title: "Drop One Non-Essential",
           actionType: "micro_journal",
           duration: "1 min",
-          reason: "Freeing up mental bandwidth restores energy faster than pushing through.",
-          journalPrompt: "What's one thing you can postpone to tomorrow guilt-free?",
+          reason:
+            "Freeing up mental bandwidth restores energy faster than pushing through.",
+          journalPrompt:
+            "What's one thing you can postpone to tomorrow guilt-free?",
           quickChips: ["Low-priority chores", "Late-night scrolling"],
           placeholder: "Name one thing to take off your plate...",
         },
       ],
     },
     anxious: {
-      empathyMessage: "That buzzing edge is uncomfortable, so let's bring the volume down one notch.",
+      empathyMessage:
+        "That buzzing edge is uncomfortable, so let's bring the volume down one notch.",
       suggestions: [
         {
           id: "1",
@@ -229,7 +246,8 @@ const getMoodFallback = (mood, companionName) => {
           actionType: "breathe",
           presetId: "sigh",
           duration: "2 mins",
-          reason: "Two quick inhales and a long exhale offload CO2 and slow heart rate.",
+          reason:
+            "Two quick inhales and a long exhale offload CO2 and slow heart rate.",
         },
         {
           id: "2",
@@ -257,14 +275,16 @@ const getMoodFallback = (mood, companionName) => {
       ],
     },
     overwhelmed: {
-      empathyMessage: "You don't have to untangle the whole week tonight—just the next five minutes.",
+      empathyMessage:
+        "You don't have to untangle the whole week tonight—just the next five minutes.",
       suggestions: [
         {
           id: "1",
           title: "Single-Line Brain Dump",
           actionType: "micro_journal",
           duration: "2 mins",
-          reason: "Getting clutter out of your head frees up working memory immediately.",
+          reason:
+            "Getting clutter out of your head frees up working memory immediately.",
           journalPrompt: "What's the #1 thing crowding your mind right now?",
           quickChips: ["Deadline pressure", "Need a clear first step"],
           placeholder: "Dump it here—just one or two lines...",
@@ -283,7 +303,8 @@ const getMoodFallback = (mood, companionName) => {
           actionType: "chat",
           duration: "3 mins",
           reason: "Pick one tiny next step together instead of carrying it all.",
-          starterPrompt: "I feel overwhelmed—help me shrink everything down to one next step.",
+          starterPrompt:
+            "I feel overwhelmed—help me shrink everything down to one next step.",
         },
       ],
     },
@@ -336,7 +357,9 @@ const normalizeSuggestions = (rawList, mood, companionName) => {
           ? item.journalPrompt.trim()
           : "What's sitting on your mind right now?";
       base.quickChips = Array.isArray(item?.quickChips)
-        ? item.quickChips.filter((c) => typeof c === "string" && c.trim()).slice(0, 2)
+        ? item.quickChips
+            .filter((c) => typeof c === "string" && c.trim())
+            .slice(0, 2)
         : ["Just getting this out", "Need a gentle reset"];
       base.placeholder =
         typeof item?.placeholder === "string" && item.placeholder.trim()
@@ -429,8 +452,12 @@ export const updateMoodEntry = async (req, res) => {
 
     const data = {};
     if (typeof note === "string") data.note = note.trim() || null;
-    if (intensity !== undefined) data.intensity = clampIntensity(intensity);
-    if (typeof mood === "string" && mood.trim()) data.mood = mood.trim().toLowerCase();
+    if (intensity !== undefined && intensity !== null) {
+      data.intensity = clampIntensity(intensity);
+    }
+    if (typeof mood === "string" && mood.trim()) {
+      data.mood = mood.trim().toLowerCase();
+    }
 
     if (Object.keys(data).length === 0) {
       return res.status(400).json({ error: "Nothing to update" });
@@ -530,7 +557,6 @@ export const getMoodSummary = async (req, res) => {
       if (!byDay.has(k)) byDay.set(k, log); // keeps latest entry per day
     }
 
-    
     const last7Days = [];
     for (let offset = 6; offset >= 0; offset -= 1) {
       const k = epochToDayKey(todayEpoch - offset * DAY_MS);
@@ -562,7 +588,9 @@ export const getMoodSummary = async (req, res) => {
       checkedInToday: Boolean(latestToday),
       todayLogsCount: todayLogs.length,
       latestToday,
-      averageIntensity7d: count7d ? Number((intensitySum / count7d).toFixed(1)) : null,
+      averageIntensity7d: count7d
+        ? Number((intensitySum / count7d).toFixed(1))
+        : null,
       moodCounts7d,
       last7Days,
     });
@@ -585,7 +613,8 @@ export const analyzeMoodAndSuggest = async (req, res) => {
     }
 
     const cleanMood = mood.trim().toLowerCase();
-    const cleanNote = typeof note === "string" && note.trim() ? note.trim() : null;
+    const cleanNote =
+      typeof note === "string" && note.trim() ? note.trim() : null;
     const cleanIntensity = clampIntensity(intensity);
     const timeOfDay = getTimeOfDay(localHour);
 
@@ -660,7 +689,11 @@ Output ONLY valid JSON:
 
     const rawContent = await generateCompletion({
       messages: [
-        { role: "system", content: "You are a straightforward, empathetic wellness companion API returning strict JSON." },
+        {
+          role: "system",
+          content:
+            "You are a straightforward, empathetic wellness companion API returning strict JSON.",
+        },
         { role: "user", content: prompt },
       ],
       model: FAST_MODEL,
@@ -678,7 +711,10 @@ Output ONLY valid JSON:
       .trim();
 
     const parsedData = JSON.parse(cleanJson);
-    if (!parsedData?.empathyMessage || !Array.isArray(parsedData?.suggestions)) {
+    if (
+      !parsedData?.empathyMessage ||
+      !Array.isArray(parsedData?.suggestions)
+    ) {
       throw new Error("Malformed suggestion payload");
     }
 
@@ -757,7 +793,7 @@ const ANSWER_LABELS = {
   good_moment: "Something positive happened today",
 };
 
-const inferMoodFromAnswers = (answers = {}) => {
+const inferMoodFromAnswers = (answers = {}, note = "") => {
   const scores = {
     peaceful: 0,
     anxious: 0,
@@ -789,11 +825,42 @@ const inferMoodFromAnswers = (answers = {}) => {
     good_moment: { grateful: 3, peaceful: 2 },
   };
 
+  const intensityWeights = {
+    tense_restless: 4,
+    heavy_drained: 4,
+    wired_on_edge: 5,
+    calm_steady: 1,
+    warm_open: 2,
+    racing_looping: 4,
+    scattered_too_much: 4,
+    foggy_blank: 3,
+    clear_present: 1,
+    appreciative_reflective: 2,
+    empty_battery: 5,
+    overstimulated: 5,
+    getting_by: 3,
+    balanced: 1,
+    uplifted: 2,
+    work_pressure: 4,
+    people_expectations: 4,
+    sleep_fatigue: 4,
+    vague_fog: 3,
+    good_moment: 1,
+  };
+
+  let intensitySum = 0;
+  let intensityCount = 0;
+
   for (const val of Object.values(answers)) {
     const weights = map[val];
-    if (!weights) continue;
-    for (const [m, pts] of Object.entries(weights)) {
-      scores[m] = (scores[m] || 0) + pts;
+    if (weights) {
+      for (const [m, pts] of Object.entries(weights)) {
+        scores[m] = (scores[m] || 0) + pts;
+      }
+    }
+    if (intensityWeights[val] !== undefined) {
+      intensitySum += intensityWeights[val];
+      intensityCount += 1;
     }
   }
 
@@ -806,13 +873,18 @@ const inferMoodFromAnswers = (answers = {}) => {
     }
   }
 
-  const intensityMap = {
-    peaceful: 2,
-    grateful: 2,
-    tired: 3,
-    anxious: 4,
-    overwhelmed: 4,
-  };
+  let computedIntensity = intensityCount
+    ? Math.round(intensitySum / intensityCount)
+    : 3;
+
+  if (
+    typeof note === "string" &&
+    /\b(panic|scold|yell|cry|can't|cant|exhaust|burnout|terrible|worst|awful|hate|stressed)\b/i.test(
+      note
+    )
+  ) {
+    computedIntensity = Math.max(computedIntensity, 4);
+  }
 
   const triggerNuance = {
     work_pressure: "Work overload",
@@ -837,7 +909,7 @@ const inferMoodFromAnswers = (answers = {}) => {
 
   return {
     mood: bestMood,
-    intensity: intensityMap[bestMood] || 3,
+    intensity: clampIntensity(computedIntensity),
     nuanceLabel: triggerNuance[answers.primaryTrigger] || "Needs a quick reset",
     summaryInsight: insights[bestMood],
   };
@@ -850,12 +922,19 @@ export const assessMoodQuestionnaire = async (req, res) => {
     const { answers, note, localHour } = req.body;
     const userId = req.user.userId;
 
-    if (!answers || typeof answers !== "object" || Object.keys(answers).length === 0) {
-      return res.status(400).json({ error: "Questionnaire answers are required" });
+    if (
+      !answers ||
+      typeof answers !== "object" ||
+      Object.keys(answers).length === 0
+    ) {
+      return res
+        .status(400)
+        .json({ error: "Questionnaire answers are required" });
     }
 
     const timeOfDay = getTimeOfDay(localHour);
-    const cleanNote = typeof note === "string" && note.trim() ? note.trim() : null;
+    const cleanNote =
+      typeof note === "string" && note.trim() ? note.trim() : null;
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -868,13 +947,17 @@ export const assessMoodQuestionnaire = async (req, res) => {
         ? user.name.trim()
         : null;
 
-    const baseline = inferMoodFromAnswers(answers);
+    const baseline = inferMoodFromAnswers(answers, cleanNote);
 
     const readableAnswers = [
-      answers.bodyState && `- Body: ${ANSWER_LABELS[answers.bodyState] || answers.bodyState}`,
-      answers.thoughtPace && `- Mind: ${ANSWER_LABELS[answers.thoughtPace] || answers.thoughtPace}`,
-      answers.energyLevel && `- Energy: ${ANSWER_LABELS[answers.energyLevel] || answers.energyLevel}`,
-      answers.primaryTrigger && `- Main driver: ${ANSWER_LABELS[answers.primaryTrigger] || answers.primaryTrigger}`,
+      answers.bodyState &&
+        `- Body: ${ANSWER_LABELS[answers.bodyState] || answers.bodyState}`,
+      answers.thoughtPace &&
+        `- Mind: ${ANSWER_LABELS[answers.thoughtPace] || answers.thoughtPace}`,
+      answers.energyLevel &&
+        `- Energy: ${ANSWER_LABELS[answers.energyLevel] || answers.energyLevel}`,
+      answers.primaryTrigger &&
+        `- Main driver: ${ANSWER_LABELS[answers.primaryTrigger] || answers.primaryTrigger}`,
     ]
       .filter(Boolean)
       .join("\n");
@@ -889,15 +972,16 @@ You are ${companion.name}. ${companion.style}
 Classify the single closest primary mood from ONLY: "peaceful", "anxious", "tired", "overwhelmed", "grateful".
 
 Keep every field direct, concrete, and non-repetitive:
-1. "nuanceLabel": 2-3 word plain description of the CAUSE or ANGLE (e.g., "Work overload", "Low-battery buzz", "Quiet burnout"). NEVER repeat synonyms of the mood like "Stressed, exhausted".
-2. "summaryInsight": 1 crisp sentence explaining what is happening and what helps most. NEVER just repeat their quiz choices back to them (e.g., do NOT write "Your muscles are tight and thoughts are racing").
-3. "empathyMessage": 1-2 straightforward sentences as ${companion.name}. Talk like a grounded friend: acknowledge the main driver directly and point to the first action below. BANNED phrases: "I sense", "heaviness you're carrying", "moment of calm", "I hear you", "hold space", "you're not alone", "it's okay to".
-4. "suggestions": 3 specific, varied actions directly tailored to their main driver and energy level (choose from "breathe", "micro_journal", "guided_steps", "chat"). Make titles, prompts, and starterPrompt directly reference their actual situation (e.g., work deadlines, lack of sleep, etc.).
+1. "intensity": integer 1 to 5 based on severity (1 = very calm/mild, 2 = light/steady, 3 = moderate discomfort or fog, 4 = heavy stress/exhaustion, 5 = acute overwhelm/panic). Do NOT default to 3.
+2. "nuanceLabel": 2-3 word plain description of the CAUSE or ANGLE (e.g., "Work overload", "Low-battery buzz", "Quiet burnout"). NEVER repeat synonyms of the mood like "Stressed, exhausted".
+3. "summaryInsight": 1 crisp sentence explaining what is happening and what helps most. NEVER just repeat their quiz choices back to them (e.g., do NOT write "Your muscles are tight and thoughts are racing").
+4. "empathyMessage": 1-2 straightforward sentences as ${companion.name}. Talk like a grounded friend: acknowledge the main driver directly and point to the first action below. BANNED phrases: "I sense", "heaviness you're carrying", "moment of calm", "I hear you", "hold space", "you're not alone", "it's okay to".
+5. "suggestions": 3 specific, varied actions directly tailored to their main driver and energy level (choose from "breathe", "micro_journal", "guided_steps", "chat"). Make titles, prompts, and starterPrompt directly reference their actual situation (e.g., work deadlines, lack of sleep, etc.).
 
 Output ONLY valid JSON:
 {
   "mood": "peaceful | anxious | tired | overwhelmed | grateful",
-  "intensity": 3,
+  "intensity": ${baseline.intensity},
   "nuanceLabel": "...",
   "summaryInsight": "...",
   "empathyMessage": "...",
@@ -946,8 +1030,12 @@ Output ONLY valid JSON:
         .trim();
 
       const parsed = JSON.parse(cleanJson);
-      const moodCandidate = String(parsed?.mood || "").trim().toLowerCase();
-      const mood = VALID_MOODS.includes(moodCandidate) ? moodCandidate : baseline.mood;
+      const moodCandidate = String(parsed?.mood || "")
+        .trim()
+        .toLowerCase();
+      const mood = VALID_MOODS.includes(moodCandidate)
+        ? moodCandidate
+        : baseline.mood;
 
       evaluated = {
         mood,
@@ -957,14 +1045,20 @@ Output ONLY valid JSON:
             ? parsed.nuanceLabel.trim()
             : baseline.nuanceLabel,
         summaryInsight:
-          typeof parsed?.summaryInsight === "string" && parsed.summaryInsight.trim()
+          typeof parsed?.summaryInsight === "string" &&
+          parsed.summaryInsight.trim()
             ? parsed.summaryInsight.trim()
             : baseline.summaryInsight,
         empathyMessage:
-          typeof parsed?.empathyMessage === "string" && parsed.empathyMessage.trim()
+          typeof parsed?.empathyMessage === "string" &&
+          parsed.empathyMessage.trim()
             ? parsed.empathyMessage.trim()
             : getMoodFallback(mood, companion.name).empathyMessage,
-        suggestions: normalizeSuggestions(parsed?.suggestions, mood, companion.name),
+        suggestions: normalizeSuggestions(
+          parsed?.suggestions,
+          mood,
+          companion.name
+        ),
       };
     } catch {
       const fb = getMoodFallback(baseline.mood, companion.name);

@@ -103,6 +103,34 @@ export default function DashboardScreen() {
   const moodRequestIdRef = useRef(0);
   const suggestionsCacheRef = useRef({});
 
+  // Synchronous refs eliminate stale closures during fast intensity/mood taps
+  const currentMoodLogIdRef = useRef(null);
+  const loadingSuggestionsRef = useRef(false);
+  const latestIntensityRef = useRef(3);
+  const hasCustomIntensityRef = useRef(false);
+  const pendingSyncRef = useRef(null);
+
+  const setMoodLogIdSync = useCallback((id) => {
+    const resolved = id || null;
+    currentMoodLogIdRef.current = resolved;
+    setCurrentMoodLogId(resolved);
+  }, []);
+
+  const setLoadingSuggestionsSync = useCallback((flag) => {
+    loadingSuggestionsRef.current = flag;
+    setLoadingSuggestions(flag);
+  }, []);
+
+  const trackPendingSync = useCallback((promise) => {
+    const wrapped = Promise.resolve(promise).finally(() => {
+      if (pendingSyncRef.current === wrapped) {
+        pendingSyncRef.current = null;
+      }
+    });
+    pendingSyncRef.current = wrapped;
+    return wrapped;
+  }, []);
+
   const saveTodayCache = useCallback(async (userId, payload) => {
     if (!userId) return;
     try {
@@ -151,10 +179,14 @@ export default function DashboardScreen() {
       lastCacheRawRef.current = null;
       lastSummaryAtRef.current = 0;
       suggestionsCacheRef.current = {};
+      pendingSyncRef.current = null;
       setSelectedMood(null);
-      setCurrentMoodLogId(null);
+      setMoodLogIdSync(null);
       setMoodNote("");
       setMoodIntensity(3);
+      latestIntensityRef.current = 3;
+      hasCustomIntensityRef.current = false;
+      setLoadingSuggestionsSync(false);
       setMoodSummary(null);
       setDailyHabits({});
       setAiSuggestions(null);
@@ -169,12 +201,16 @@ export default function DashboardScreen() {
     activeUserIdRef.current = user.id;
     lastCacheRawRef.current = null;
     lastSummaryAtRef.current = 0;
+    pendingSyncRef.current = null;
 
     suggestionsCacheRef.current = {};
     setSelectedMood(null);
-    setCurrentMoodLogId(null);
+    setMoodLogIdSync(null);
     setMoodNote("");
     setMoodIntensity(3);
+    latestIntensityRef.current = 3;
+    hasCustomIntensityRef.current = false;
+    setLoadingSuggestionsSync(false);
     setMoodSummary(null);
     setDailyHabits({});
     setAiSuggestions(null);
@@ -208,17 +244,21 @@ export default function DashboardScreen() {
             const taggedSuggestions = {
               ...parsed.aiSuggestions,
               _companionId: companionIdVal,
+              logId: parsed.logId || parsed.aiSuggestions?.logId || null,
+              lastIntensity: intensityVal,
             };
 
             setSelectedMood(parsed.mood);
-            setCurrentMoodLogId(parsed.logId || null);
+            setMoodLogIdSync(parsed.logId || null);
             setMoodNote(noteVal);
             setMoodIntensity(intensityVal);
+            latestIntensityRef.current = intensityVal;
+            hasCustomIntensityRef.current = false;
             setAiSuggestions(taggedSuggestions);
             setCompletedActions(parsed.completedActions || {});
             restoredFromLocal = true;
 
-            const memKey = `${user.id}::${companionIdVal}::${parsed.mood}::${intensityVal}::${noteVal
+            const memKey = `${user.id}::${companionIdVal}::${parsed.mood}::3::${noteVal
               .trim()
               .toLowerCase()}`;
             suggestionsCacheRef.current[memKey] = taggedSuggestions;
@@ -232,7 +272,9 @@ export default function DashboardScreen() {
         lastSummaryAtRef.current = Date.now();
         const [_, summary] = await Promise.all([
           loadAffirmation(),
-          api.getMoodSummary ? api.getMoodSummary().catch(() => null) : Promise.resolve(null),
+          api.getMoodSummary
+            ? api.getMoodSummary().catch(() => null)
+            : Promise.resolve(null),
         ]);
 
         if (cancelled) return;
@@ -242,18 +284,32 @@ export default function DashboardScreen() {
 
           if (!restoredFromLocal && summary.latestToday) {
             const today = summary.latestToday;
-            const isKnownMood = today.mood && MOODS.some((m) => m.id === today.mood);
+            const isKnownMood =
+              today.mood && MOODS.some((m) => m.id === today.mood);
             if (isKnownMood) {
+              const todayIntensity = today.intensity || 3;
               const snapshot = today.aiSnapshot
-                ? { ...today.aiSnapshot, _companionId: activeCompanion.id }
-                : {
-                    ...getLocalFallbackSuggestions(today.mood, activeCompanion.name),
+                ? {
+                    ...today.aiSnapshot,
                     _companionId: activeCompanion.id,
+                    logId: today.id || null,
+                    lastIntensity: todayIntensity,
+                  }
+                : {
+                    ...getLocalFallbackSuggestions(
+                      today.mood,
+                      activeCompanion.name
+                    ),
+                    _companionId: activeCompanion.id,
+                    logId: today.id || null,
+                    lastIntensity: todayIntensity,
                   };
               setSelectedMood(today.mood);
-              setCurrentMoodLogId(today.id || null);
+              setMoodLogIdSync(today.id || null);
               setMoodNote(today.note || "");
-              setMoodIntensity(today.intensity || 3);
+              setMoodIntensity(todayIntensity);
+              latestIntensityRef.current = todayIntensity;
+              hasCustomIntensityRef.current = false;
               setAiSuggestions(snapshot);
             }
           }
@@ -266,6 +322,7 @@ export default function DashboardScreen() {
     };
   }, [authLoading, user?.id]);
 
+  // Deep-link handler when opened from notification tap
   useEffect(() => {
     if (!focusSection && !openAction) return;
 
@@ -312,10 +369,13 @@ export default function DashboardScreen() {
             lastCacheRawRef.current = cachedRaw;
             const parsed = JSON.parse(cachedRaw);
             if (parsed?.mood && parsed?.aiSuggestions) {
+              const restoredIntensity = Number(parsed.intensity) || 3;
               setSelectedMood(parsed.mood);
-              setCurrentMoodLogId(parsed.logId || null);
+              setMoodLogIdSync(parsed.logId || null);
               setMoodNote(parsed.note || "");
-              setMoodIntensity(Number(parsed.intensity) || 3);
+              setMoodIntensity(restoredIntensity);
+              latestIntensityRef.current = restoredIntensity;
+              hasCustomIntensityRef.current = false;
               setAiSuggestions({
                 ...parsed.aiSuggestions,
                 _companionId: parsed.companionId || activeCompanion.id,
@@ -333,14 +393,17 @@ export default function DashboardScreen() {
       return () => {
         active = false;
       };
-    }, [user?.id, activeCompanion.id, refreshProgressSummary])
+    }, [user?.id, activeCompanion.id, refreshProgressSummary, setMoodLogIdSync])
   );
 
   // Refresh suggestions if AI companion changed in Profile
   useEffect(() => {
     if (!selectedMood || !aiSuggestions || loadingSuggestions) return;
-    if (aiSuggestions._companionId && aiSuggestions._companionId !== activeCompanion.id) {
-      handleMoodSelect(selectedMood, false, true, moodIntensity);
+    if (
+      aiSuggestions._companionId &&
+      aiSuggestions._companionId !== activeCompanion.id
+    ) {
+      handleMoodSelect(selectedMood, false, true, latestIntensityRef.current);
     }
   }, [activeCompanion.id]);
 
@@ -373,14 +436,15 @@ export default function DashboardScreen() {
       mood,
       isNoteUpdate = false,
       forceRefresh = false,
-      nextIntensity = moodIntensity,
+      nextIntensity = latestIntensityRef.current,
       explicitNote = null
     ) => {
       try {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       } catch {}
 
-      const isSameMoodTap = !isNoteUpdate && !forceRefresh && mood === selectedMood;
+      const isSameMoodTap =
+        !isNoteUpdate && !forceRefresh && mood === selectedMood;
       if (isSameMoodTap && aiSuggestions) {
         return;
       }
@@ -388,10 +452,12 @@ export default function DashboardScreen() {
       const isSwitchingMood = !isNoteUpdate && mood !== selectedMood;
       const baseNote = explicitNote !== null ? explicitNote : moodNote;
       const noteToSend = isSwitchingMood ? "" : baseNote.trim();
-      const effectiveIntensity = isSwitchingMood ? 3 : nextIntensity;
-      const cacheKey = `${user?.id || "guest"}::${activeCompanion.id}::${mood}::${effectiveIntensity}::${noteToSend.toLowerCase()}`;
+      const effectiveIntensity = isSwitchingMood ? 3 : Number(nextIntensity) || 3;
+      const cacheKey = `${user?.id || "guest"}::${activeCompanion.id}::${mood}::3::${noteToSend.toLowerCase()}`;
       const logIdToPass =
-        isNoteUpdate && mood === selectedMood ? currentMoodLogId : null;
+        isNoteUpdate && mood === selectedMood
+          ? currentMoodLogIdRef.current
+          : null;
       const requestId = ++moodRequestIdRef.current;
 
       if (explicitNote !== null) {
@@ -400,40 +466,62 @@ export default function DashboardScreen() {
 
       if (!isNoteUpdate) {
         setSelectedMood(mood);
-        setCurrentMoodLogId(null);
+        setMoodLogIdSync(null);
         setCompletedActions({});
         if (isSwitchingMood) {
           setMoodNote("");
           setMoodIntensity(3);
+          latestIntensityRef.current = 3;
+          hasCustomIntensityRef.current = false;
         }
       }
 
       markDailyHabit(user?.id, "checkin").then((h) => setDailyHabits(h));
 
-      if (!forceRefresh && !isNoteUpdate && suggestionsCacheRef.current[cacheKey]) {
+      if (
+        !forceRefresh &&
+        !isNoteUpdate &&
+        suggestionsCacheRef.current[cacheKey]
+      ) {
         const cached = suggestionsCacheRef.current[cacheKey];
         setAiSuggestions(cached);
         let resolvedLogId = cached?.logId || null;
-        setCurrentMoodLogId(resolvedLogId);
+        setMoodLogIdSync(resolvedLogId);
+
+        const desiredIntensity = hasCustomIntensityRef.current
+          ? latestIntensityRef.current
+          : cached?.lastIntensity || effectiveIntensity;
+
+        setMoodIntensity(desiredIntensity);
+        latestIntensityRef.current = desiredIntensity;
 
         if (!resolvedLogId && user?.id && user.id !== "temp_guest") {
-          try {
-            const saved = await api.logMood(mood, effectiveIntensity, noteToSend);
-            if (requestId !== moodRequestIdRef.current) return;
-            if (saved?.id) {
-              resolvedLogId = saved.id;
-              cached.logId = saved.id;
-              setCurrentMoodLogId(saved.id);
-            }
-            refreshProgressSummary(true);
-          } catch {}
+          await trackPendingSync(
+            (async () => {
+              try {
+                const saved = await api.logMood(
+                  mood,
+                  desiredIntensity,
+                  noteToSend
+                );
+                if (requestId !== moodRequestIdRef.current) return;
+                if (saved?.id) {
+                  resolvedLogId = saved.id;
+                  cached.logId = saved.id;
+                  cached.lastIntensity = desiredIntensity;
+                  setMoodLogIdSync(saved.id);
+                }
+                refreshProgressSummary(true);
+              } catch {}
+            })()
+          );
         }
 
         saveTodayCache(user?.id, {
           mood,
           logId: resolvedLogId,
           note: noteToSend,
-          intensity: effectiveIntensity,
+          intensity: desiredIntensity,
           companionId: activeCompanion.id,
           aiSuggestions: cached,
           completedActions: {},
@@ -441,58 +529,95 @@ export default function DashboardScreen() {
         return;
       }
 
-      setLoadingSuggestions(true);
+      setLoadingSuggestionsSync(true);
 
-      try {
-        const data = await api.analyzeMoodAndSuggest(
-          mood,
-          noteToSend,
-          logIdToPass,
-          new Date().getHours(),
-          effectiveIntensity
-        );
-        if (requestId !== moodRequestIdRef.current) return;
+      const syncTask = (async () => {
+        try {
+          const data = await api.analyzeMoodAndSuggest(
+            mood,
+            noteToSend,
+            logIdToPass,
+            new Date().getHours(),
+            effectiveIntensity
+          );
+          if (requestId !== moodRequestIdRef.current) return;
 
-        const taggedData = { ...data, _companionId: activeCompanion.id };
-        const resolvedLogId = data?.logId || logIdToPass || null;
-        if (resolvedLogId) {
-          setCurrentMoodLogId(resolvedLogId);
+          const resolvedLogId = data?.logId || logIdToPass || null;
+          if (resolvedLogId) {
+            setMoodLogIdSync(resolvedLogId);
+          }
+
+          // Preserve and push any intensity tapped while the AI request was in flight
+          const finalIntensity = hasCustomIntensityRef.current
+            ? latestIntensityRef.current
+            : effectiveIntensity;
+
+          if (
+            resolvedLogId &&
+            finalIntensity !== effectiveIntensity &&
+            user?.id &&
+            user.id !== "temp_guest" &&
+            api.updateMoodEntry
+          ) {
+            try {
+              await api.updateMoodEntry(resolvedLogId, {
+                intensity: finalIntensity,
+              });
+            } catch (err) {
+              console.warn("Delayed intensity sync failed:", err?.message);
+            }
+          }
+
+          const taggedData = {
+            ...data,
+            _companionId: activeCompanion.id,
+            logId: resolvedLogId,
+            lastIntensity: finalIntensity,
+          };
+
+          suggestionsCacheRef.current[cacheKey] = taggedData;
+          setAiSuggestions(taggedData);
+
+          saveTodayCache(user?.id, {
+            mood,
+            logId: resolvedLogId,
+            note: noteToSend,
+            intensity: finalIntensity,
+            companionId: activeCompanion.id,
+            aiSuggestions: taggedData,
+            completedActions: isNoteUpdate ? completedActions : {},
+          });
+
+          refreshProgressSummary(true);
+        } catch {
+          if (requestId !== moodRequestIdRef.current) return;
+          const finalIntensity = hasCustomIntensityRef.current
+            ? latestIntensityRef.current
+            : effectiveIntensity;
+          const fallback = {
+            ...getLocalFallbackSuggestions(mood, activeCompanion.name),
+            _companionId: activeCompanion.id,
+            logId: logIdToPass,
+            lastIntensity: finalIntensity,
+          };
+          setAiSuggestions(fallback);
+          saveTodayCache(user?.id, {
+            mood,
+            logId: logIdToPass,
+            note: noteToSend,
+            intensity: finalIntensity,
+            companionId: activeCompanion.id,
+            aiSuggestions: fallback,
+            completedActions: isNoteUpdate ? completedActions : {},
+          });
+        } finally {
+          if (requestId === moodRequestIdRef.current) {
+            setLoadingSuggestionsSync(false);
+          }
         }
-        suggestionsCacheRef.current[cacheKey] = taggedData;
-        setAiSuggestions(taggedData);
+      })();
 
-        saveTodayCache(user?.id, {
-          mood,
-          logId: resolvedLogId,
-          note: noteToSend,
-          intensity: effectiveIntensity,
-          companionId: activeCompanion.id,
-          aiSuggestions: taggedData,
-          completedActions: isNoteUpdate ? completedActions : {},
-        });
-
-        refreshProgressSummary(true);
-      } catch {
-        if (requestId !== moodRequestIdRef.current) return;
-        const fallback = {
-          ...getLocalFallbackSuggestions(mood, activeCompanion.name),
-          _companionId: activeCompanion.id,
-        };
-        setAiSuggestions(fallback);
-        saveTodayCache(user?.id, {
-          mood,
-          logId: logIdToPass,
-          note: noteToSend,
-          intensity: effectiveIntensity,
-          companionId: activeCompanion.id,
-          aiSuggestions: fallback,
-          completedActions: isNoteUpdate ? completedActions : {},
-        });
-      } finally {
-        if (requestId === moodRequestIdRef.current) {
-          setLoadingSuggestions(false);
-        }
-      }
+      await trackPendingSync(syncTask);
     },
     [
       user?.id,
@@ -500,68 +625,154 @@ export default function DashboardScreen() {
       activeCompanion.name,
       selectedMood,
       moodNote,
-      moodIntensity,
-      currentMoodLogId,
       aiSuggestions,
       completedActions,
       saveTodayCache,
       refreshProgressSummary,
+      setMoodLogIdSync,
+      setLoadingSuggestionsSync,
+      trackPendingSync,
     ]
   );
 
   const handleIntensitySelect = useCallback(
-    (level) => {
+    async (level) => {
       try {
         Haptics.selectionAsync();
       } catch {}
+
+      hasCustomIntensityRef.current = true;
+      latestIntensityRef.current = level;
       setMoodIntensity(level);
+
+      // Update cached suggestions entry so switching moods back stays in sync
+      Object.values(suggestionsCacheRef.current).forEach((entry) => {
+        if (entry && entry.logId && entry.logId === currentMoodLogIdRef.current) {
+          entry.lastIntensity = level;
+        }
+      });
+
+      const activeLogId = currentMoodLogIdRef.current;
+      let resolvedLogId = activeLogId;
+
+      if (
+        activeLogId &&
+        user?.id &&
+        user.id !== "temp_guest" &&
+        api.updateMoodEntry
+      ) {
+        await trackPendingSync(
+          (async () => {
+            try {
+              await api.updateMoodEntry(activeLogId, { intensity: level });
+              refreshProgressSummary(true);
+            } catch (err) {
+              console.warn("updateMoodEntry failed:", err?.message || err);
+              // Fallback: if row wasn't persisted yet (404), create one now
+              if (
+                String(err?.message || "").toLowerCase().includes("not found") &&
+                selectedMood &&
+                api.logMood
+              ) {
+                try {
+                  const created = await api.logMood(
+                    selectedMood,
+                    level,
+                    moodNote.trim()
+                  );
+                  if (created?.id) {
+                    resolvedLogId = created.id;
+                    setMoodLogIdSync(created.id);
+                    refreshProgressSummary(true);
+                  }
+                } catch {}
+              }
+            }
+          })()
+        );
+      } else if (
+        !loadingSuggestionsRef.current &&
+        selectedMood &&
+        user?.id &&
+        user.id !== "temp_guest" &&
+        api.logMood
+      ) {
+        await trackPendingSync(
+          (async () => {
+            try {
+              const saved = await api.logMood(
+                selectedMood,
+                level,
+                moodNote.trim()
+              );
+              if (saved?.id) {
+                resolvedLogId = saved.id;
+                setMoodLogIdSync(saved.id);
+              }
+              refreshProgressSummary(true);
+            } catch (err) {
+              console.warn("Fallback logMood failed:", err?.message || err);
+            }
+          })()
+        );
+      }
 
       if (selectedMood && aiSuggestions) {
         saveTodayCache(user?.id, {
           mood: selectedMood,
-          logId: currentMoodLogId,
+          logId: resolvedLogId,
           note: moodNote.trim(),
           intensity: level,
           companionId: activeCompanion.id,
-          aiSuggestions,
+          aiSuggestions: {
+            ...aiSuggestions,
+            logId: resolvedLogId,
+            lastIntensity: level,
+          },
           completedActions,
         });
-      }
-
-      if (currentMoodLogId && api.updateMoodEntry) {
-        api
-          .updateMoodEntry(currentMoodLogId, { intensity: level })
-          .then(() => refreshProgressSummary(true))
-          .catch(() => {});
       }
     },
     [
       user?.id,
       selectedMood,
-      currentMoodLogId,
       moodNote,
       activeCompanion.id,
       aiSuggestions,
       completedActions,
       saveTodayCache,
       refreshProgressSummary,
+      setMoodLogIdSync,
+      trackPendingSync,
     ]
   );
 
   const handleSubmitNote = useCallback(
     (trimmedNote) => {
       if (!selectedMood || !trimmedNote) return;
-      handleMoodSelect(selectedMood, true, true, moodIntensity, trimmedNote);
+      handleMoodSelect(
+        selectedMood,
+        true,
+        true,
+        latestIntensityRef.current,
+        trimmedNote
+      );
     },
-    [selectedMood, moodIntensity, handleMoodSelect]
+    [selectedMood, handleMoodSelect]
   );
 
   const handleRefreshSuggestions = useCallback(
     (draftNote) => {
       if (!selectedMood) return;
-      handleMoodSelect(selectedMood, false, true, moodIntensity, draftNote);
+      handleMoodSelect(
+        selectedMood,
+        false,
+        true,
+        latestIntensityRef.current,
+        draftNote
+      );
     },
-    [selectedMood, moodIntensity, handleMoodSelect]
+    [selectedMood, handleMoodSelect]
   );
 
   const handleSuggestionAction = useCallback(
@@ -593,23 +804,24 @@ export default function DashboardScreen() {
   );
 
   const persistReflectionNote = async (text) => {
-    if (!text) return currentMoodLogId;
+    const activeId = currentMoodLogIdRef.current;
+    if (!text) return activeId;
     try {
-      if (currentMoodLogId) {
-        await api.updateMoodNote(currentMoodLogId, text);
-        return currentMoodLogId;
+      if (activeId) {
+        await api.updateMoodNote(activeId, text);
+        return activeId;
       }
       const saved = await api.logMood(
         selectedMood || "reflective",
-        moodIntensity,
+        latestIntensityRef.current,
         text
       );
       if (saved?.id) {
-        setCurrentMoodLogId(saved.id);
+        setMoodLogIdSync(saved.id);
         return saved.id;
       }
     } catch {}
-    return currentMoodLogId;
+    return currentMoodLogIdRef.current;
   };
 
   const handleCompleteQuickAction = async (task, reflectionText = "") => {
@@ -620,7 +832,7 @@ export default function DashboardScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch {}
 
-    let resolvedLogId = currentMoodLogId;
+    let resolvedLogId = currentMoodLogIdRef.current;
     if (reflectionText) {
       resolvedLogId = await persistReflectionNote(reflectionText);
     }
@@ -639,7 +851,7 @@ export default function DashboardScreen() {
         mood: selectedMood,
         logId: resolvedLogId,
         note: moodNote.trim(),
-        intensity: moodIntensity,
+        intensity: latestIntensityRef.current,
         companionId: activeCompanion.id,
         aiSuggestions,
         completedActions: nextCompleted,
@@ -650,7 +862,7 @@ export default function DashboardScreen() {
   };
 
   const handleExploreReflectionInChat = async (task, reflectionText = "") => {
-    let resolvedLogId = currentMoodLogId;
+    let resolvedLogId = currentMoodLogIdRef.current;
     if (reflectionText) {
       resolvedLogId = await persistReflectionNote(reflectionText);
     }
@@ -666,7 +878,7 @@ export default function DashboardScreen() {
         mood: selectedMood,
         logId: resolvedLogId,
         note: moodNote.trim(),
-        intensity: moodIntensity,
+        intensity: latestIntensityRef.current,
         companionId: activeCompanion.id,
         aiSuggestions,
         completedActions: nextCompleted,
@@ -692,6 +904,9 @@ export default function DashboardScreen() {
     setHistoryVisible(true);
     setLoadingHistory(true);
     try {
+      if (pendingSyncRef.current) {
+        await pendingSyncRef.current.catch(() => {});
+      }
       const items = api.getMoodHistory ? await api.getMoodHistory(30, 30) : [];
       setHistoryItems(Array.isArray(items) ? items : []);
     } catch {
@@ -711,19 +926,25 @@ export default function DashboardScreen() {
     } catch {}
   };
 
-  const confirmDeleteLog = useCallback((id) => {
-    if (Platform.OS === "web") {
-      if (typeof window !== "undefined" && window.confirm("Delete this mood check-in?")) {
-        handleDeleteLog(id);
+  const confirmDeleteLog = useCallback(
+    (id) => {
+      if (Platform.OS === "web") {
+        if (
+          typeof window !== "undefined" &&
+          window.confirm("Delete this mood check-in?")
+        ) {
+          handleDeleteLog(id);
+        }
+        return;
       }
-      return;
-    }
 
-    Alert.alert("Delete check-in", "Remove this mood entry from your history?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: () => handleDeleteLog(id) },
-    ]);
-  }, [refreshProgressSummary]);
+      Alert.alert("Delete check-in", "Remove this mood entry from your history?", [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete", style: "destructive", onPress: () => handleDeleteLog(id) },
+      ]);
+    },
+    [refreshProgressSummary]
+  );
 
   const scrollToSection = useCallback((key) => {
     try {
@@ -748,7 +969,8 @@ export default function DashboardScreen() {
       if (habitId === "activity") {
         const modalTask = aiSuggestions?.suggestions?.find(
           (s) =>
-            (s.actionType === "guided_steps" || s.actionType === "micro_journal") &&
+            (s.actionType === "guided_steps" ||
+              s.actionType === "micro_journal") &&
             !completedActions[s.id || s.title]
         );
         setActiveQuickAction(modalTask || QUICK_SENSORY_RESET);
@@ -823,7 +1045,9 @@ export default function DashboardScreen() {
                 styles.topStreakPill,
                 {
                   backgroundColor:
-                    moodStreak > 0 ? "rgba(245, 158, 11, 0.14)" : colors.surface,
+                    moodStreak > 0
+                      ? "rgba(245, 158, 11, 0.14)"
+                      : colors.surface,
                   borderColor:
                     moodStreak > 0 ? "rgba(245, 158, 11, 0.4)" : colors.border,
                 },
