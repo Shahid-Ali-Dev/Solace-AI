@@ -1,5 +1,5 @@
 // app/login.jsx
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -12,22 +12,39 @@ import {
   ScrollView,
   ActivityIndicator,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import Constants, { ExecutionEnvironment } from "expo-constants";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
-import * as WebBrowser from "expo-web-browser";
-import * as Google from "expo-auth-session/providers/google";
 
 import { useTheme } from "../context/ThemeContext";
 import { useAuth } from "../context/AuthContext";
-
-WebBrowser.maybeCompleteAuthSession();
 
 const LOGO_URL =
   "https://res.cloudinary.com/dru5oqalj/image/upload/v1793887328/1a8b5e2d-5030-440f-9a91-8b76fcf3a917__1_-Photoroom_ukmqzz.png";
 
 const GOOGLE_ICON_URL =
   "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_%22G%22_logo.svg/120px-Google_%22G%22_logo.svg.png";
+
+const GOOGLE_WEB_CLIENT_ID =
+  process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ||
+  process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB ||
+  "";
+
+const getNativeGoogleModule = () => {
+  if (Platform.OS === "web") return null;
+  const isExpoGo =
+    Constants.executionEnvironment === ExecutionEnvironment.StoreClient ||
+    Constants.appOwnership === "expo";
+  if (isExpoGo) return null;
+
+  try {
+    return require("@react-native-google-signin/google-signin");
+  } catch {
+    return null;
+  }
+};
 
 export default function AuthScreen() {
   const { colors, isDark } = useTheme();
@@ -42,73 +59,20 @@ export default function AuthScreen() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const handledResponseRef = useRef(null);
-
-  const webClientId = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB;
-  const androidClientId = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID;
-  const iosClientId = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS || webClientId;
-
-  const [request, response, promptAsync] = Google.useAuthRequest({
-    webClientId,
-    androidClientId,
-    iosClientId,
-    scopes: ["profile", "email"],
-  });
-
-  const handleClose = () => {
-    try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } catch {}
-
-    if (router.canGoBack()) {
-      router.back();
-    } else {
-      router.replace("/(tabs)");
-    }
-  };
+  const googleModule = useMemo(() => getNativeGoogleModule(), []);
 
   useEffect(() => {
-    if (!response || handledResponseRef.current === response) return;
-    handledResponseRef.current = response;
-
-    if (response.type === "success") {
-      const idToken =
-        response.authentication?.idToken || response.params?.id_token || null;
-      const accessToken =
-        response.authentication?.accessToken ||
-        response.params?.access_token ||
-        null;
-
-      if (idToken || accessToken) {
-        completeGoogleLogin({ idToken, accessToken });
-      } else {
-        setError("Google did not return an authentication token.");
-        setGoogleLoading(false);
-      }
-    } else if (response.type === "cancel" || response.type === "dismiss") {
-      setGoogleLoading(false);
-    } else if (response.type === "error") {
-      setError(
-        response.error?.message ||
-          "Google authentication was cancelled or encountered an error."
-      );
-      setGoogleLoading(false);
-    } else {
-      setGoogleLoading(false);
-    }
-  }, [response]);
-
-  const completeGoogleLogin = async ({ idToken, accessToken }) => {
+    if (!googleModule?.GoogleSignin || !GOOGLE_WEB_CLIENT_ID) return;
     try {
-      setGoogleLoading(true);
-      await loginWithGoogle({ idToken, accessToken });
-      router.replace("/(tabs)");
+      googleModule.GoogleSignin.configure({
+        webClientId: GOOGLE_WEB_CLIENT_ID,
+        scopes: ["profile", "email"],
+        offlineAccess: false,
+      });
     } catch (err) {
-      setError(err.message || "Failed to sign in with Google.");
-    } finally {
-      setGoogleLoading(false);
+      console.warn("GoogleSignin.configure failed:", err?.message || err);
     }
-  };
+  }, [googleModule]);
 
   const triggerHaptic = () => {
     try {
@@ -116,26 +80,84 @@ export default function AuthScreen() {
     } catch {}
   };
 
+  const handleClose = () => {
+    triggerHaptic();
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace("/(tabs)");
+    }
+  };
+
   const handleGoogleSignIn = async () => {
     triggerHaptic();
     setError("");
 
-    if (!request) {
+    if (!googleModule?.GoogleSignin) {
       setError(
-        "Google Sign-In is not configured for this build yet. Check your Client IDs or continue with email."
+        Platform.OS === "web"
+          ? "Google popup sign-in is available in the mobile APK. Use email sign-in on web."
+          : "Google native popup requires the installed APK/dev build. Use email sign-in inside Expo Go."
       );
       return;
     }
 
+    if (!GOOGLE_WEB_CLIENT_ID) {
+      setError("Missing EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID in your build config.");
+      return;
+    }
+
+    const { GoogleSignin, statusCodes } = googleModule;
     setGoogleLoading(true);
+
     try {
-      const res = await promptAsync();
-      if (res?.type !== "success") {
+      await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+
+      // Clear cached selection so the account picker popup lets users choose an account cleanly
+      try {
+        await GoogleSignin.signOut();
+      } catch {}
+
+      const result = await GoogleSignin.signIn();
+
+      if (result?.type === "cancelled") {
         setGoogleLoading(false);
+        return;
       }
-    } catch {
+
+      const payload = result?.data || result;
+      const idToken = payload?.idToken || null;
+      const googleUser = payload?.user || {};
+
+      if (!idToken && !googleUser?.email) {
+        setError("Google did not return an account token. Please try again.");
+        setGoogleLoading(false);
+        return;
+      }
+
+      await loginWithGoogle({
+        email: googleUser.email,
+        name: googleUser.name,
+        idToken,
+      });
+
+      router.replace("/(tabs)");
+    } catch (err) {
+      if (err?.code === statusCodes?.SIGN_IN_CANCELLED) {
+        // User dismissed the popup
+      } else if (err?.code === statusCodes?.IN_PROGRESS) {
+        setError("Google sign-in is already open.");
+      } else if (err?.code === statusCodes?.PLAY_SERVICES_NOT_AVAILABLE) {
+        setError("Google Play Services is unavailable or needs an update on this device.");
+      } else if (String(err?.code) === "10" || String(err?.message).includes("DEVELOPER_ERROR")) {
+        setError(
+          "Google OAuth setup mismatch: verify your EAS SHA-1 fingerprint and Web Client ID in Google Cloud Console."
+        );
+      } else {
+        setError(err?.message || "Could not complete Google sign-in.");
+      }
+    } finally {
       setGoogleLoading(false);
-      setError("Could not open Google authentication.");
     }
   };
 
@@ -172,169 +194,181 @@ export default function AuthScreen() {
   const handleGuest = async () => {
     triggerHaptic();
     setLoading(true);
-    await loginAsGuest();
-    setLoading(false);
-    router.replace("/(tabs)");
+    try {
+      await loginAsGuest();
+      router.replace("/(tabs)");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  return (
-    <KeyboardAvoidingView
-      style={[styles.container, { backgroundColor: colors.background }]}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
-        <TouchableOpacity
-          onPress={handleClose}
-          style={[
-            styles.closeBtn,
-            { backgroundColor: colors.surface, borderColor: colors.border },
-          ]}
-        >
-          <Ionicons name="close" size={20} color={colors.text} />
-        </TouchableOpacity>
+  const onPrimaryText = isDark ? "#0B0F17" : "#FFFFFF";
 
-        <View style={styles.brandBox}>
-          <View
+  return (
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <TouchableOpacity
+            onPress={handleClose}
             style={[
-              styles.logoWrapper,
+              styles.closeBtn,
               { backgroundColor: colors.surface, borderColor: colors.border },
             ]}
           >
-            <Image
-              source={{ uri: LOGO_URL }}
-              style={styles.logoImage}
-              resizeMode="contain"
-            />
-          </View>
-          <Text style={[styles.brandTitle, { color: colors.text }]}>
-            Solace AI
-          </Text>
-          <Text style={[styles.brandSubtitle, { color: colors.textMuted }]}>
-            {isSignUp
-              ? "Begin your journey to daily calm"
-              : "Welcome back to your peaceful space"}
-          </Text>
-        </View>
+            <Ionicons name="close" size={20} color={colors.text} />
+          </TouchableOpacity>
 
-        {/* Continue with Google */}
-        <TouchableOpacity
-          onPress={handleGoogleSignIn}
-          disabled={googleLoading || !request}
-          style={[
-            styles.googleButton,
-            {
-              backgroundColor: colors.surface,
-              borderColor: colors.border,
-              opacity: googleLoading || !request ? 0.7 : 1,
-            },
-          ]}
-        >
-          {googleLoading ? (
-            <ActivityIndicator color={colors.text} size="small" />
-          ) : (
-            <>
+          <View style={styles.brandBox}>
+            <View
+              style={[
+                styles.logoWrapper,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+              ]}
+            >
               <Image
-                source={{ uri: GOOGLE_ICON_URL }}
-                style={styles.googleIcon}
+                source={{ uri: LOGO_URL }}
+                style={styles.logoImage}
                 resizeMode="contain"
               />
-              <Text style={[styles.googleButtonText, { color: colors.text }]}>
-                Continue with Google
-              </Text>
-            </>
-          )}
-        </TouchableOpacity>
-
-        {/* Divider */}
-        <View style={styles.dividerRow}>
-          <View
-            style={[styles.dividerLine, { backgroundColor: colors.border }]}
-          />
-          <Text style={[styles.dividerText, { color: colors.textMuted }]}>
-            or with email
-          </Text>
-          <View
-            style={[styles.dividerLine, { backgroundColor: colors.border }]}
-          />
-        </View>
-
-        {/* Mode Toggle */}
-        <View
-          style={[
-            styles.toggleContainer,
-            { backgroundColor: colors.surface, borderColor: colors.border },
-          ]}
-        >
-          <TouchableOpacity
-            onPress={() => {
-              setIsSignUp(false);
-              setError("");
-            }}
-            style={[
-              styles.toggleTab,
-              !isSignUp && { backgroundColor: colors.primary },
-            ]}
-          >
-            <Text
-              style={[
-                styles.toggleText,
-                {
-                  color: !isSignUp
-                    ? isDark
-                      ? "#0B0F17"
-                      : "#FFFFFF"
-                    : colors.textMuted,
-                },
-              ]}
-            >
-              Sign In
+            </View>
+            <Text style={[styles.brandTitle, { color: colors.text }]}>
+              Solace AI
             </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => {
-              setIsSignUp(true);
-              setError("");
-            }}
-            style={[
-              styles.toggleTab,
-              isSignUp && { backgroundColor: colors.primary },
-            ]}
-          >
-            <Text
-              style={[
-                styles.toggleText,
-                {
-                  color: isSignUp
-                    ? isDark
-                      ? "#0B0F17"
-                      : "#FFFFFF"
-                    : colors.textMuted,
-                },
-              ]}
-            >
-              Sign Up
+            <Text style={[styles.brandSubtitle, { color: colors.textMuted }]}>
+              {isSignUp
+                ? "Begin your journey to daily calm"
+                : "Welcome back to your peaceful space"}
             </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Error Box */}
-        {!!error && (
-          <View style={styles.errorBox}>
-            <Ionicons name="alert-circle-outline" size={18} color="#EF4444" />
-            <Text style={styles.errorText}>{error}</Text>
           </View>
-        )}
 
-        {/* Form Inputs */}
-        <View style={styles.form}>
-          {isSignUp && (
+          {/* Native In-App Google Popup Trigger */}
+          <TouchableOpacity
+            onPress={handleGoogleSignIn}
+            disabled={googleLoading || loading}
+            style={[
+              styles.googleButton,
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.border,
+                opacity: googleLoading || loading ? 0.7 : 1,
+              },
+            ]}
+          >
+            {googleLoading ? (
+              <ActivityIndicator color={colors.text} size="small" />
+            ) : (
+              <>
+                <Image
+                  source={{ uri: GOOGLE_ICON_URL }}
+                  style={styles.googleIcon}
+                  resizeMode="contain"
+                />
+                <Text style={[styles.googleButtonText, { color: colors.text }]}>
+                  Continue with Google
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+
+          {/* Divider */}
+          <View style={styles.dividerRow}>
+            <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+            <Text style={[styles.dividerText, { color: colors.textMuted }]}>
+              or with email
+            </Text>
+            <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+          </View>
+
+          {/* Mode Toggle */}
+          <View
+            style={[
+              styles.toggleContainer,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+            ]}
+          >
+            <TouchableOpacity
+              onPress={() => {
+                setIsSignUp(false);
+                setError("");
+              }}
+              style={[
+                styles.toggleTab,
+                !isSignUp && { backgroundColor: colors.primary },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.toggleText,
+                  { color: !isSignUp ? onPrimaryText : colors.textMuted },
+                ]}
+              >
+                Sign In
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                setIsSignUp(true);
+                setError("");
+              }}
+              style={[
+                styles.toggleTab,
+                isSignUp && { backgroundColor: colors.primary },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.toggleText,
+                  { color: isSignUp ? onPrimaryText : colors.textMuted },
+                ]}
+              >
+                Sign Up
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Error Box */}
+          {!!error && (
+            <View style={styles.errorBox}>
+              <Ionicons name="alert-circle-outline" size={18} color="#EF4444" />
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          )}
+
+          {/* Form Inputs */}
+          <View style={styles.form}>
+            {isSignUp && (
+              <View style={styles.inputGroup}>
+                <Text style={[styles.inputLabel, { color: colors.textMuted }]}>
+                  Name
+                </Text>
+                <TextInput
+                  style={[
+                    styles.input,
+                    {
+                      backgroundColor: colors.surface,
+                      borderColor: colors.border,
+                      color: colors.text,
+                    },
+                  ]}
+                  placeholder="What should we call you?"
+                  placeholderTextColor={colors.textMuted}
+                  underlineColorAndroid="transparent"
+                  value={name}
+                  onChangeText={setName}
+                />
+              </View>
+            )}
+
             <View style={styles.inputGroup}>
               <Text style={[styles.inputLabel, { color: colors.textMuted }]}>
-                Name
+                Email
               </Text>
               <TextInput
                 style={[
@@ -345,98 +379,72 @@ export default function AuthScreen() {
                     color: colors.text,
                   },
                 ]}
-                placeholder="What should we call you?"
+                placeholder="you@example.com"
                 placeholderTextColor={colors.textMuted}
-                value={name}
-                onChangeText={setName}
+                underlineColorAndroid="transparent"
+                value={email}
+                onChangeText={setEmail}
+                autoCapitalize="none"
+                keyboardType="email-address"
               />
             </View>
-          )}
 
-          <View style={styles.inputGroup}>
-            <Text style={[styles.inputLabel, { color: colors.textMuted }]}>
-              Email
-            </Text>
-            <TextInput
-              style={[
-                styles.input,
-                {
-                  backgroundColor: colors.surface,
-                  borderColor: colors.border,
-                  color: colors.text,
-                },
-              ]}
-              placeholder="you@example.com"
-              placeholderTextColor={colors.textMuted}
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-              keyboardType="email-address"
-            />
-          </View>
-
-          <View style={styles.inputGroup}>
-            <Text style={[styles.inputLabel, { color: colors.textMuted }]}>
-              Password
-            </Text>
-            <TextInput
-              style={[
-                styles.input,
-                {
-                  backgroundColor: colors.surface,
-                  borderColor: colors.border,
-                  color: colors.text,
-                },
-              ]}
-              placeholder="••••••••"
-              placeholderTextColor={colors.textMuted}
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-            />
-          </View>
-
-          <TouchableOpacity
-            onPress={handleSubmit}
-            disabled={loading}
-            style={[styles.primaryButton, { backgroundColor: colors.primary }]}
-          >
-            {loading ? (
-              <ActivityIndicator color={isDark ? "#0B0F17" : "#FFFFFF"} />
-            ) : (
-              <Text
-                style={[
-                  styles.primaryButtonText,
-                  { color: isDark ? "#0B0F17" : "#FFFFFF" },
-                ]}
-              >
-                {isSignUp ? "Create Account" : "Sign In"}
+            <View style={styles.inputGroup}>
+              <Text style={[styles.inputLabel, { color: colors.textMuted }]}>
+                Password
               </Text>
-            )}
-          </TouchableOpacity>
+              <TextInput
+                style={[
+                  styles.input,
+                  {
+                    backgroundColor: colors.surface,
+                    borderColor: colors.border,
+                    color: colors.text,
+                  },
+                ]}
+                placeholder="••••••••"
+                placeholderTextColor={colors.textMuted}
+                underlineColorAndroid="transparent"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+              />
+            </View>
 
-          <TouchableOpacity
-            onPress={handleGuest}
-            style={[styles.guestButton, { borderColor: colors.border }]}
-          >
-            <Ionicons
-              name="sparkles-outline"
-              size={18}
-              color={colors.primary}
-            />
-            <Text style={[styles.guestButtonText, { color: colors.text }]}>
-              Continue as Guest
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+            <TouchableOpacity
+              onPress={handleSubmit}
+              disabled={loading || googleLoading}
+              style={[styles.primaryButton, { backgroundColor: colors.primary }]}
+            >
+              {loading ? (
+                <ActivityIndicator color={onPrimaryText} />
+              ) : (
+                <Text style={[styles.primaryButtonText, { color: onPrimaryText }]}>
+                  {isSignUp ? "Create Account" : "Sign In"}
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={handleGuest}
+              disabled={loading || googleLoading}
+              style={[styles.guestButton, { borderColor: colors.border }]}
+            >
+              <Ionicons name="leaf-outline" size={18} color={colors.primary} />
+              <Text style={[styles.guestButtonText, { color: colors.text }]}>
+                Continue as Guest
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  scrollContent: { paddingHorizontal: 24, paddingTop: 50, paddingBottom: 40 },
+  scrollContent: { paddingHorizontal: 24, paddingTop: 14, paddingBottom: 40 },
   closeBtn: {
     alignSelf: "flex-end",
     width: 36,
@@ -514,6 +522,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     paddingHorizontal: 16,
     fontSize: 15,
+    ...(Platform.OS === "web" ? { outlineStyle: "none", outlineWidth: 0 } : {}),
   },
   primaryButton: {
     height: 50,

@@ -27,6 +27,12 @@
       "expo-image",
       "expo-notifications",
       [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.864428998943-bp1jht47rvesfs4ealnst5ikio3odgs2"
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "backgroundColor": "#0B0F17",

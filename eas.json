@@ -11,7 +11,8 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://solace-ai-zxmh.onrender.com/api"
+        "EXPO_PUBLIC_API_URL": "https://solace-ai-zxmh.onrender.com/api",
+        "EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB": "864428998943-kb4f83sf75m2q87c79rl085br41kcm7v.apps.googleusercontent.com"
       }
     },
     "production": {
@@ -20,7 +21,8 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://solace-ai-zxmh.onrender.com/api"
+        "EXPO_PUBLIC_API_URL": "https://solace-ai-zxmh.onrender.com/api",
+        "EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB": "864428998943-kb4f83sf75m2q87c79rl085br41kcm7v.apps.googleusercontent.com"
       }
     }
   }
