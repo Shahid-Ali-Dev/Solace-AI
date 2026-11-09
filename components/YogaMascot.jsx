@@ -142,8 +142,15 @@ export default function YogaMascot({
     outputRange: [1, 0, 0],
   });
 
+  const openEyeOpacity = blinkAnim.interpolate({
+    inputRange: [0.08, 0.35, 1],
+    outputRange: [0, 1, 1],
+  });
+
   const showMeditatingEyes = isActive && !sessionComplete;
   const isExhaling = isActive && phaseName === "Exhale";
+  const eyeStripTop = (42 / 160) * size;
+  const eyeStripHeight = (20 / 160) * size;
 
   return (
     <Animated.View
@@ -529,27 +536,35 @@ export default function YogaMascot({
             pointerEvents="none"
             renderToHardwareTextureAndroid
             shouldRasterizeIOS
-            style={[StyleSheet.absoluteFill, { transform: [{ scaleY: blinkAnim }] }]}
+            style={{
+              position: "absolute",
+              left: 0,
+              top: eyeStripTop,
+              width: size,
+              height: eyeStripHeight,
+              opacity: openEyeOpacity,
+              transform: [{ scaleY: blinkAnim }],
+            }}
           >
-            <Svg width={size} height={size} viewBox="0 0 160 160">
-              <Ellipse cx="69" cy="52" rx="3.7" ry="4.2" fill="#1E1B3A" />
-              <Ellipse cx="69" cy="52.6" rx="2.6" ry="3.1" fill={companion.eyeColor} />
-              <Circle cx="69" cy="52.4" r="1.5" fill="#1E1B3A" />
-              <Circle cx="67.6" cy="50.5" r="1.35" fill="#FFFFFF" />
+            <Svg width={size} height={eyeStripHeight} viewBox="0 0 160 20">
+              <Ellipse cx="69" cy="10" rx="3.7" ry="4.2" fill="#1E1B3A" />
+              <Ellipse cx="69" cy="10.6" rx="2.6" ry="3.1" fill={companion.eyeColor} />
+              <Circle cx="69" cy="10.4" r="1.5" fill="#1E1B3A" />
+              <Circle cx="67.6" cy="8.5" r="1.35" fill="#FFFFFF" />
               <Path
-                d="M 63.5 49.6 Q 68.8 46.5 73.2 49.8"
+                d="M 63.5 7.6 Q 68.8 4.5 73.2 7.8"
                 stroke="#1E1B3A"
                 strokeWidth="1.5"
                 strokeLinecap="round"
                 fill="none"
               />
 
-              <Ellipse cx="91" cy="52" rx="3.7" ry="4.2" fill="#1E1B3A" />
-              <Ellipse cx="91" cy="52.6" rx="2.6" ry="3.1" fill={companion.eyeColor} />
-              <Circle cx="91" cy="52.4" r="1.5" fill="#1E1B3A" />
-              <Circle cx="89.6" cy="50.5" r="1.35" fill="#FFFFFF" />
+              <Ellipse cx="91" cy="10" rx="3.7" ry="4.2" fill="#1E1B3A" />
+              <Ellipse cx="91" cy="10.6" rx="2.6" ry="3.1" fill={companion.eyeColor} />
+              <Circle cx="91" cy="10.4" r="1.5" fill="#1E1B3A" />
+              <Circle cx="89.6" cy="8.5" r="1.35" fill="#FFFFFF" />
               <Path
-                d="M 86.8 49.8 Q 91.2 46.5 96.5 49.6"
+                d="M 86.8 7.8 Q 91.2 4.5 96.5 7.6"
                 stroke="#1E1B3A"
                 strokeWidth="1.5"
                 strokeLinecap="round"
